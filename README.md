@@ -2,7 +2,7 @@
 
 Gattini is a local-first tool in early development for coordinating AI coding agents through durable jobs, runtime adapters, and verifiable results. The initial target is a macOS CLI and daemon; OpenCode is the first worker runtime to investigate.
 
-**Project status: durable fake jobs, an initial OpenCode review path, and tested cancellation/recovery.** This repository has a strict TypeScript package, a local CLI and daemon, one approved live OpenCode V2 read-only review, and one approved live exact-session cancellation. Crash reconciliation has passed fake-runtime process-kill tests. Checkpoint 2 awaits human review before coding worktree development. Results report acceptance as `unverified` until independent verification exists.
+**Project status: durable fake jobs, an initial OpenCode review path, tested cancellation/recovery, and owned worktree preparation.** This repository has a strict TypeScript package, a local CLI and daemon, one approved live OpenCode V2 read-only review, and one approved live exact-session cancellation. Crash reconciliation has passed fake-runtime process-kill tests. Checkpoint 2 was approved; Task 7 adds an internal owned worktree manager. The CLI `code` role still runs the fake adapter. Results report acceptance as `unverified` until independent verification exists.
 
 ## Project documents
 
@@ -38,6 +38,8 @@ node dist/src/cli/gattini.js result JOB_ID --json
 The `reviewer` role uses a private `roles.json` in the state directory. It pins a named OpenCode agent, exact model, working directory, loopback service address, and deny-all/read-only permission rules. The daemon attaches to an already-running OpenCode 2.0.16 service; it does not start or stop that shared service. Use `--role reviewer` with `start` only after configuring that file. See [ADR 005](docs/decisions/005-durable-opencode-review.md) and the [compatibility report](docs/compatibility.md) for the tested path and limits.
 
 `gattini cancel JOB_ID --json` requests cancellation of a reviewer job. A queued job with no runtime attempt is cancelled immediately. A running job is marked `cancelled` only when its exact OpenCode session is inactive and reports interruption; otherwise it remains `interrupted` and blocks another review in the same directory until reconciliation. See [ADR 006](docs/decisions/006-cancellation-and-recovery.md).
+
+The internal [worktree manager](src/environments/worktree.ts) prepares a job-owned branch and worktree from an explicit full commit SHA and records ownership before creation. It preserves dirty and untracked files in the source checkout and blocks competing writers for the same repository. It is not yet exposed through `gattini start`; no coding worker or host containment is implied. See [ADR 007](docs/decisions/007-owned-coding-worktrees.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to propose and record changes.
 

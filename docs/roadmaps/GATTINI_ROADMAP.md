@@ -1,6 +1,6 @@
 # Gattini — implementation roadmap
 
-Status: Tasks 1–6 complete; Checkpoint 2 approved on 25 September 2026. Checkpoint 1 was approved on 24 September 2026. Companion specification: `GATTINI_MASTER_PLAN.md`. Build on Nate's Mac using Codex or Claude Code. These Gattini files are the authoritative plan/task targets; do not maintain duplicate checklists in `tasks/plan.md` or `tasks/todo.md`.
+Status: Tasks 1–7 complete; Checkpoint 2 approved on 25 September 2026. Checkpoint 1 was approved on 24 September 2026. Companion specification: `GATTINI_MASTER_PLAN.md`. Build on Nate's Mac using Codex or Claude Code. These Gattini files are the authoritative plan/task targets; do not maintain duplicate checklists in `tasks/plan.md` or `tasks/todo.md`.
 
 ## How to execute
 
@@ -68,7 +68,7 @@ Use three release gates: A = useful OpenCode delegation; B = verified runtime ne
 
 ## Phase 2 — safe coding and verified results
 
-### [ ] Task 7 — prepare owned coding worktrees
+### [x] Task 7 — prepare owned coding worktrees
 
 - Deliver: explicit repository/base-SHA resolution and per-job branch/worktree ownership records.
 - Acceptance: dirty user checkout remains unchanged; base snapshot is reproducible; invalid paths/symlink escapes are rejected. Worktree isolation is never reported as a sandbox.
@@ -268,6 +268,13 @@ Append one entry per task: task ID; date; commit if available; files changed; ex
 - Read-only live reconciliation: a copy of the Task 5 SQLite database migrated from schema 2 to 3 with its stored events and completed result intact. On startup, exact-session inspection reconciled the zero-cost failed Task 5 session from `interrupted` to `failed` without provider work. The original evidence database was not modified.
 - Approved live check: the owner authorised up to two paid attempts. The first submission (`265a323a-e197-4207-94ac-24157bba4068`) failed before attempt claim/model execution; the transient preflight cause was not captured. The second (`7b7af040-71c4-4938-9fd6-c9056385e291`) reached exact OpenCode session `ses_f2b60f2c3ffeglSnKZwfZzVHlQ`; Gattini cancelled that session. OpenCode 2.0.16 reported `interrupted`, the exact ID was absent from active sessions, and Gattini persisted `cancelled` across a clean daemon restart. The disposable `README.md` hash remained `5746640d8ef710122ff5e3181d5b992f29afb648`, its diff was empty, and the shared OpenCode service stayed running. OpenCode reported USD **0.00080625** for the interrupted model run. The private directory/database/socket were 0700/0600/0600. See [the compatibility record](../compatibility.md) for exact agent/model and limits.
 - Limitation: preflight failures currently leave only a generic failed result; the first attempt's exact error was not persisted. The launch-to-first-handle crash window blocks the scope for manual reconciliation. Real cancellation was exercised on one read-only session, not every OpenCode tool operation. Next: Checkpoint 2 human review before Task 7.
+
+### Task 7 evidence — 2026-09-25
+
+- Approval: owner explicitly approved Checkpoint 2 and authorized Task 7. Before implementation, 44 intended project files, including `.gitignore`, were inventoried; no project symlinks were found. The only secret-pattern matches were deliberate invalid-credential test strings. Ignored `.DS_Store`, `dist/`, and `node_modules/` were excluded. The initial baseline commit is `e518198a5b19606b6c363a2a976550fc3f032a81` on `main`; it includes Tasks 1–6 and the approval record. Existing runtime configuration was not changed.
+- Files: `src/environments/worktree.ts`, `tests/worktree.test.ts`, [ADR 007](../decisions/007-owned-coding-worktrees.md), README, and this roadmap. The manager resolves a canonical Git root and full commit SHA, reserves a per-job branch/worktree ownership row before `git worktree add`, verifies the resulting `HEAD`, and keeps a repository writer lock for reserved or ready records. A partial destination after failure remains reserved for manual inspection; no automatic cleanup occurs.
+- Offline verification: `npm run typecheck && npm test` passed 45/45 tests on Node 26.9.0. `env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run typecheck && env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` passed 45/45 on Node 24.21.0. Full suite execution needed local Unix-socket permission; an initial sandboxed run failed existing daemon tests at `listen EPERM`, then passed with that permission. Four new disposable Git fixture tests cover a base older than `HEAD`, dirty tracked and untracked source files, paths with spaces, invalid repositories and abbreviated/missing SHAs, traversal and symlink escapes, failed Git creation with retained ownership evidence, and two managers competing for the same canonical repository through an alias. The private worktree SQLite file was observed at mode 0600.
+- Live checks/spend: none; no provider call. Limitations: this is an internal preparation API, not yet a CLI/daemon coding job. The existing `code` role remains fake. Worktree records are keyed by job UUID but are not yet foreign-keyed to daemon jobs. A crash after reservation needs manual reconciliation. A Git worktree is change separation, not a security sandbox; Task 8 must establish policy enforcement before a real write worker is dispatched. Next: Task 8 policy and approval blocking.
 
 ## Starting prompt for Codex or Claude Code
 
