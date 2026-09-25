@@ -1,0 +1,23 @@
+{
+  "name": "gattini",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "gattini": "dist/src/cli/gattini.js",
+    "gattinid": "dist/src/daemon/gattinid.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3"
+  }
+}

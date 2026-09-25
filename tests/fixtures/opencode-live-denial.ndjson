@@ -1,0 +1,5 @@
+{"type":"step_start","sessionID":"ses_REDACTED","part":{"type":"step-start"}}
+{"type":"tool_use","sessionID":"ses_REDACTED","part":{"type":"tool","tool":"read","state":{"status":"completed"}}}
+{"type":"step_finish","sessionID":"ses_REDACTED","part":{"type":"step-finish"}}
+{"type":"step_start","sessionID":"ses_REDACTED","part":{"type":"step-start"}}
+{"type":"text","sessionID":"ses_REDACTED","part":{"type":"text","text":"[redacted model output]"}}

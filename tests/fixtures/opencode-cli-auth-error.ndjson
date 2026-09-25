@@ -1,0 +1,2 @@
+{"type":"step_start","timestamp":0,"sessionID":"ses_redacted","part":{"id":"prt_redacted","sessionID":"ses_redacted","messageID":"msg_redacted","type":"step-start","snapshot":"redacted"}}
+{"type":"error","timestamp":1,"sessionID":"ses_redacted","error":{"type":"provider.auth","message":"Error from provider (Console): OpenCode's free tier can only be used from within OpenCode","status":403}}

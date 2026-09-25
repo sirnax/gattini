@@ -1,0 +1,3 @@
+{"type":"step_start","sessionID":"ses_REDACTED","part":{"type":"step-start"}}
+{"type":"tool_use","sessionID":"ses_REDACTED","part":{"type":"tool","tool":"shell","state":{"status":"error","error":"Tool execution interrupted"}}}
+{"type":"error","sessionID":"ses_REDACTED","error":{"type":"aborted","message":"Step interrupted"}}
