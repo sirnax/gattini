@@ -1,6 +1,6 @@
 # Gattini — master plan
 
-Status: proposed build specification, updated 24 September 2026. Target: Nate's Mac, implemented with Codex or Claude Code.
+Status: proposed build specification, updated 26 September 2026. Target: Nate's Mac, implemented with Codex or Claude Code.
 
 Read this file first, then `GATTINI_ROADMAP.md` in this directory. These two files supersede the earlier MCP-first plan for this project. They describe the intended system; the roadmap and README distinguish implemented slices from proposals. No published package or unverified integration is implied.
 
@@ -37,7 +37,7 @@ Add a Codex worker adapter and run the same contract tests against both real run
 
 ### Editor and distribution release
 
-Package for macOS, create a Homebrew tap, then add a thin VS Code extension. Other editors can invoke the CLI from their terminals or tasks; native integrations require explicit compatibility testing.
+Package for macOS, then allow local Homebrew tap validation and a thin VS Code extension to proceed independently once the protocol is stable and the human approves extension work. Tap publication still needs separate approval. Other editors can invoke the CLI from their terminals or tasks; native integrations require explicit compatibility testing.
 
 ### Whole-computer expansion
 
@@ -186,7 +186,7 @@ Release readiness requires a real Codex or Claude caller → Gattini → existin
 ## 12. Build-agent working agreement
 
 1. Read both documents and inspect the Mac/repository before changing anything.
-2. Execute the next unchecked roadmap task only, then record evidence and status.
+2. Own the earliest ready task on the roadmap's critical path. Delegate independent, bounded preparation asynchronously as described in the roadmap, but integrate each task only after its dependencies and required checkpoint approval. Record evidence and status for the combined result; preparation alone never completes a task.
 3. Preserve unrelated changes and existing runtime agents/authentication.
 4. At each checkpoint summarise files changed, tests, live costs, unresolved risks and next tasks; wait for human review.
 5. Ask before installing software, creating external repositories, publishing, enabling startup services, spending on live tests or requesting macOS control permissions unless already explicitly authorised.

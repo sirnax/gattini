@@ -2,46 +2,48 @@
 
 ## Project context
 
-Read [README.md](README.md), [the master plan](docs/roadmaps/GATTINI_MASTER_PLAN.md), and [the roadmap](docs/roadmaps/GATTINI_ROADMAP.md) before making project changes. The repository has a durable fake-job CLI/daemon and an experimental OpenCode review path; check the roadmap before claiming a live integration or a later planned capability exists.
+Read [README.md](README.md), [the master plan](docs/roadmaps/GATTINI_MASTER_PLAN.md), and [the roadmap](docs/roadmaps/GATTINI_ROADMAP.md) before making project changes. Tasks 1–12 are complete and Checkpoint 4 awaits human review; the CLI/daemon has durable fake jobs, OpenCode review, exact-session reviewer follow-up, bounded admission, and a narrowly guarded code proposal/apply path. Check the roadmap and ADR 009 before claiming a broader live integration or a later planned capability exists.
 
-## Model selection
+## Agent orchestration
 
-Choose both a model and a reasoning effort. The model sets the capability tier; effort sets how much reasoning to spend within that tier. Start with the lowest-cost combination likely to succeed, then step up only when the task's uncertainty, impact, or observed difficulty justifies it.
+The primary agent owns orchestration, integration and final verification. Complete trivial work directly. For substantial bounded implementation, delegate only when a well-scoped assignment is likely to reduce total cost without compromising reliability; choose the least expensive suitable model from the roster.
 
-### Effort guide
+Delegation is not the default for every development action. Use it selectively for substantial implementation, genuine parallelism, specialised investigation or independent assurance.
 
-Use the reasoning levels supported by the selected model in the current Codex environment. The present catalog exposes `low`, `medium`, `high`, `xhigh`, and `max` for GPT-6 Luna; Sol and Astra also expose `ultra`. Support can change by model or environment, so verify it instead of assuming every level is valid everywhere.
+Prefer deterministic tools before additional agents: repository search, compiler output, tests, type checking, linting, static analysis, logs and git diffs should answer questions where possible without model delegation.
 
-- **Low** — default for narrow, well-specified tasks: documentation edits, small fixes with a clear cause, focused searches, and bounded read-only checks.
-- **Medium** — default for ordinary implementation: a few related files, routine debugging, normal code review, or tasks with some dependencies or judgement.
-- **High** — reserve for difficult debugging, substantial multi-file changes, competing design choices, or reviews with meaningful security or compatibility implications.
-- **Xhigh / max** — exceptional use only when high effort has not resolved a genuinely hard problem and the quality gain is worth the extra time and token use. Do not select these just because a task is long.
-- **Ultra** — avoid for routine work. It adds automatic task delegation and must not bypass the delegation rules below.
+### Default subagent roster
 
-### Model guide
+| Model       | Effort | Intended assignment                                                                                                                   |
+| ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| gpt-6-luna  | low    | Mechanical inspection, repository search, simple classification and very small read-only tasks                                        |
+| gpt-6-luna  | medium | Documentation, routine inspection, test interpretation and small well-defined edits                                                   |
+| gpt-6-luna  | high   | Bounded documentation or analysis, focused investigation and small edits with clear verification                                      |
+| gpt-6-luna  | xhigh  | Harder non-code reasoning, synthesis across files and bounded implementation with a precise specification and strong checks           |
+| gpt-6-sol   | medium | Default delegated implementation, tests, bounded bug fixes and code review                                                            |
+| gpt-6-sol   | high   | Difficult implementation, non-trivial debugging, consequential review and work requiring stronger reasoning                           |
+| gpt-6-astra | low    | Complex or ambiguous debugging, architecture and cross-cutting implementation where Sol is unlikely to be sufficient                  |
+| gpt-6-astra | medium | Exceptional high-consequence architecture, unresolved complex debugging, security-sensitive reasoning and critical independent review |
 
-- **GPT-6 Luna** — default model for implementation, docs, research, and review. Use the least expensive available Luna variant; the current catalog exposes `gpt-6-luna`. Pair it with low effort for simple work and medium for ordinary implementation. Raise to high only for a hard task that remains within Luna's capability tier.
-- **GPT-6 Sol** — use when a task needs broader synthesis or stronger reasoning than Luna at an appropriate effort level: coordinating several dependent steps, resolving cross-module tradeoffs, or reviewing a difficult failure. Prefer low or medium first; use high only when the problem warrants it.
-- **GPT-6 Astra** — exceptional escalation for a consequential architecture, debugging, or safety question that remains unresolved with Sol. Start at low effort as requested; raise effort only if low is demonstrably insufficient and the stakes justify it.
+Luna medium is the normal choice for small, well-defined work. Use Luna high when that work needs more reasoning, and Luna xhigh for bounded tasks where its extra reasoning is useful and the result can be checked. The comparison shows Luna remains much weaker than Sol on agentic terminal coding, so Sol medium remains the normal software-development subagent. Sol high is the escalation for difficult software-development work.
 
-Do not escalate solely to compensate for a vague task: first clarify the outcome, inspect evidence, and reduce uncertainty. Use only exact model IDs and effort levels exposed by Codex. If a requested model or level is unavailable, say so and choose the nearest available option explicitly rather than silently substituting it.
+Astra is an exceptional escalation rather than a routine implementation model. Max effort for every model, Astra high/xhigh, Sol xhigh and older model families are outside the default **subagent** roster. The primary model selected in Codex is unaffected by this restriction. Use these settings as subagents only when the owner explicitly requests them or authorises a comparison.
 
-## Delegation
+### Concurrency and fan-out
 
-Delegate only when the task can be divided into independent, bounded pieces and parallel work will reduce completion time. Choose the model and effort for each worker explicitly using the guides above; default to GPT-6 Luna at low effort for narrow fact-finding or review, and medium for ordinary implementation. Use Sol only for a subtask whose synthesis or reasoning exceeds the Luna tier. Reserve Astra at low effort for an exceptional unresolved subtask. Never dispatch the same files or overlapping edits to multiple workers.
+The current Codex development runtime permits up to 16 active subagents alongside the primary agent. This is a capacity limit, not a target, and does not change Gattini's planned runtime worker-concurrency limits. The owner has asked to use genuine parallelism to shorten the remaining roadmap. Start independent bounded work promptly, including read-only research and fixture preparation for later tasks, while the primary owns the earliest ready critical-path implementation.
 
-Give each delegated worker:
+Before dispatch, name each worker's exact file or worktree ownership, model and effort, inputs, acceptance checks, and completion boundary. Run concurrent edits only in separate non-overlapping areas or worktrees. Reserve shared contracts, protocol, store, migrations, scheduler integration, and final verification for the primary unless an interface and sole writer have been explicitly assigned. Prefer a small coherent set of workers over filling slots with overlapping or speculative work; add workers when they can remove a real bottleneck. Keep later-task work as preparation until its dependencies and checkpoints are satisfied.
 
-- a specific question or deliverable;
-- relevant file paths and constraints;
-- whether it may edit files or should report findings only;
-- verification expectations and a clear completion boundary.
+Only the primary agent may delegate.
 
-The coordinating agent owns integration: inspect every delegated result, resolve conflicts, verify the combined change, and update the roadmap only with observed evidence. Delegation does not transfer responsibility for correctness, security, or user-facing claims. Do not recursively delegate, exceed the task's scope, or ask a worker to install software, spend money, publish, or make external changes without the owner's explicit approval.
+Subagents must not spawn additional agents unless the owner explicitly authorises nested delegation.
+
+Avoid overlapping file ownership. One agent should own an implementation area at a time. Review agents should normally be read-only.
 
 ## Repository workflow
 
-- Follow the next unchecked task in the roadmap unless the user directs otherwise.
+- Follow the roadmap's asynchronous execution plan: own the earliest ready critical-path task, delegate independent bounded preparation when it reduces completion time, and integrate later tasks only after their dependencies and checkpoint approvals. The user may direct a narrower scope.
 - Preserve unrelated changes and existing runtime configuration.
 - Record commands, outcomes, and evidence for completed roadmap tasks. Never mark work complete based only on an agent's claim.
 - Ask before installing software, creating external repositories, publishing, enabling startup services, or running paid live tests unless already authorized.

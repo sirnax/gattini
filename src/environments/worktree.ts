@@ -141,6 +141,19 @@ export class WorktreeManager {
     return row ? record(row) : null;
   }
 
+  /** Read the durable ownership ledger without discovering similarly named resources. */
+  listRecords(): WorktreeRecord[] {
+    return (this.db.prepare("SELECT * FROM worktrees ORDER BY created_at, job_id").all() as Row[]).map(record);
+  }
+
+  /** A recorded path and branch must still match the manager's canonical naming scheme. */
+  matchesExpectedIdentity(value: WorktreeRecord): boolean {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.jobId)) return false;
+    const id = value.jobId.toLowerCase();
+    return value.branch === `codex/gattini-${id}` &&
+      value.worktreePath === join(this.root, id);
+  }
+
   prepare(input: { jobId: string; repositoryPath: string; baseSha: string }): WorktreeRecord {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.jobId)) {
       throw new WorktreeError("Job ID must be a UUID");

@@ -16,7 +16,10 @@ export interface ReviewRole {
 export interface OpenCodeCliEvent {
   type: string;
   sessionID?: string;
-  part?: { type?: string; tool?: string; state?: { status?: string }; text?: string };
+  id?: string;
+  eventID?: string;
+  part?: { type?: string; id?: string; tool?: string; state?: { status?: string }; text?: string;
+    cost?: number; tokens?: { input?: number; output?: number } };
   error?: { type?: string; message?: string };
 }
 
@@ -40,7 +43,7 @@ export async function preflightReview(role: ReviewRole): Promise<void> {
   const agent = agents.find(item => item.id === role.agent);
   if (!agent || !Array.isArray(agent.permissions)) throw new Error(`OpenCode agent ${role.agent} is unavailable`);
   const expected = role.permissions;
-  const actual = agent.permissions.slice(-expected.length);
+  const actual = agent.permissions;
   if (actual.length !== expected.length || actual.some((rule, index) => {
     const wanted = expected[index];
     return !wanted || rule.action !== wanted.action || rule.resource !== wanted.resource || rule.effect !== wanted.effect;
@@ -54,9 +57,36 @@ export async function runReview(
   task: string,
   onEvent: (event: OpenCodeCliEvent) => void,
   signal?: AbortSignal,
+  timeoutMs = 300_000,
 ): Promise<{ sessionId: string; summary: string }> {
+  return runReviewStream(role, task, onEvent, signal, undefined, timeoutMs);
+}
+
+/** Continue the saved OpenCode session without relying on implicit last-session routing. */
+export async function runReviewFollowup(
+  role: ReviewRole,
+  sessionId: string,
+  task: string,
+  onEvent: (event: OpenCodeCliEvent) => void,
+  signal?: AbortSignal,
+  timeoutMs = 300_000,
+): Promise<{ sessionId: string; summary: string }> {
+  if (!/^ses_[A-Za-z0-9]+$/.test(sessionId)) throw new Error("Invalid OpenCode session ID");
+  return runReviewStream(role, task, onEvent, signal, sessionId, timeoutMs);
+}
+
+function runReviewStream(
+  role: ReviewRole,
+  task: string,
+  onEvent: (event: OpenCodeCliEvent) => void,
+  signal?: AbortSignal,
+  expectedSessionId?: string,
+  timeoutMs = 300_000,
+): Promise<{ sessionId: string; summary: string }> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw new RangeError("Review timeout must be 1..300000 ms");
   return new Promise((resolve, reject) => {
-    const child = spawn("opencode", ["run", "--agent", role.agent, "--model", role.model, "--format", "json", task], {
+    const args = ["run", ...(expectedSessionId ? ["--session", expectedSessionId] : []), "--agent", role.agent, "--model", role.model, "--format", "json", task];
+    const child = spawn("opencode", args, {
       cwd: role.directory, env: { ...process.env, PWD: role.directory }, stdio: ["ignore", "pipe", "pipe"], signal,
     });
     let pending = "";
@@ -66,9 +96,9 @@ export async function runReview(
     let summary = "";
     let streamError: Error | undefined;
     const timer = setTimeout(() => {
-      streamError = new Error("OpenCode review exceeded five minutes; runtime state requires reconciliation");
+      streamError = new Error("OpenCode review exceeded its runtime timeout; runtime state requires reconciliation");
       child.kill("SIGTERM");
-    }, 300_000);
+    }, timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -88,6 +118,7 @@ export async function runReview(
         try {
           const event = JSON.parse(line) as OpenCodeCliEvent;
           if (typeof event.type !== "string") throw new Error("Missing OpenCode event type");
+          if (expectedSessionId && event.sessionID !== expectedSessionId) throw new Error("OpenCode follow-up event has missing or mismatched session ID");
           if (event.sessionID) {
             if (sessionId && event.sessionID !== sessionId) throw new Error("OpenCode stream changed session ID");
             sessionId = event.sessionID;

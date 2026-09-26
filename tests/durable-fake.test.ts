@@ -149,11 +149,11 @@ test("protocol mismatch and malformed JSON return typed request errors", async (
   assert.equal((malformed.error as Record<string, unknown>).code, "INVALID_REQUEST");
 });
 
-test("empty and existing schema v1 databases migrate to v3; newer schemas are rejected", async () => {
+test("empty and existing schema v1 databases migrate to v7; newer schemas are rejected", async () => {
   const emptyPath = tempDirectory();
   const { daemon: emptyDaemon } = await daemonAt(emptyPath);
   const emptyDb = new DatabaseSync(join(emptyPath, "jobs.sqlite"));
-  assert.equal((emptyDb.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 3);
+  assert.equal((emptyDb.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 7);
   emptyDb.close();
 
   const v1Path = tempDirectory();
@@ -174,16 +174,54 @@ test("empty and existing schema v1 databases migrate to v3; newer schemas are re
   v1Db.close();
   await daemonAt(v1Path);
   const migrated = new DatabaseSync(join(v1Path, "jobs.sqlite"));
-  assert.equal((migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 3);
+  assert.equal((migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 7);
   migrated.close();
 
   const futurePath = tempDirectory();
   const futureDb = new DatabaseSync(join(futurePath, "jobs.sqlite"));
-  futureDb.exec("PRAGMA user_version = 4");
+  futureDb.exec("PRAGMA user_version = 8");
   futureDb.close();
-  await assert.rejects(startDaemon(futurePath), /Unsupported database schema version 4/);
+  await assert.rejects(startDaemon(futurePath), /Unsupported database schema version 8/);
   // Keep a reference assertion to ensure the empty database daemon remained usable.
   assert.equal((await request(emptyDaemon.socketPath, wire("empty", "status", { jobId: "missing" }))).ok, false);
+});
+
+test("schema v3 migration retains existing job, event, and attempt references", async () => {
+  const path = tempDirectory();
+  const dbPath = join(path, "jobs.sqlite");
+  const old = new DatabaseSync(dbPath);
+  old.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE jobs (
+      id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, input_digest TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('queued','running','cancelling','cancelled','completed','failed','interrupted')),
+      job_json TEXT NOT NULL, config_json TEXT NOT NULL, result_json TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      runtime_session_id TEXT, resolved_json TEXT, scope_key TEXT
+    );
+    CREATE TABLE events (job_id TEXT NOT NULL REFERENCES jobs(id), sequence INTEGER NOT NULL,
+      event_json TEXT NOT NULL, PRIMARY KEY (job_id, sequence));
+    CREATE TABLE attempts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id),
+      owner_token TEXT NOT NULL, phase TEXT NOT NULL, lease_expires_at TEXT NOT NULL,
+      runtime_session_id TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0);
+    INSERT INTO jobs VALUES ('old-job','old-key','digest','completed','{}','{}','{}','2026-09-24','2026-09-24',NULL,NULL,NULL);
+    INSERT INTO events VALUES ('old-job',1,'{}');
+    INSERT INTO attempts VALUES ('old-attempt','old-job','old-owner','completed','2026-09-24',NULL,0);
+    PRAGMA user_version = 3;
+  `);
+  old.close();
+  await daemonAt(path);
+  const migrated = new DatabaseSync(dbPath);
+  assert.equal((migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 7);
+  assert.equal(migrated.prepare("SELECT count(*) AS n FROM jobs").get()?.n, 1);
+  assert.equal(migrated.prepare("SELECT count(*) AS n FROM events").get()?.n, 1);
+  assert.equal(migrated.prepare("SELECT count(*) AS n FROM attempts").get()?.n, 1);
+  assert.equal(migrated.prepare("SELECT count(*) AS n FROM turn_results").get()?.n, 1);
+  migrated.prepare("INSERT INTO attempts (id,job_id,owner_token,phase,lease_expires_at) VALUES (?,?,?,?,?)")
+    .run("later-attempt", "old-job", "", "queued", "2026-09-25");
+  assert.equal(migrated.prepare("SELECT count(*) AS n FROM attempts WHERE job_id='old-job'").get()?.n, 2);
+  assert.deepEqual(migrated.prepare("PRAGMA foreign_key_check").all(), []);
+  migrated.close();
 });
 
 test("state directory, database and socket have user-only permissions", async () => {

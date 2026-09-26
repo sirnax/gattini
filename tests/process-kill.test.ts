@@ -106,6 +106,7 @@ test("killing the submitting client during fake run leaves daemon-owned job runn
 test("killing daemon during fake run preserves uncertain handle and restart does not relaunch", async () => {
   const f = fixture(); let d = daemon(f); const sock = join(f.dir, "gattinid.sock"); await ready(sock);
   const id = await submit(sock, "daemon-kill"); await until(async () => existsSync(join(f.flags, "run-entered")), Boolean).catch(error => { throw new Error(`${error}; calls=${readFileSync(f.calls, "utf8")}`); });
+  await until(() => status(sock, id), value => value.runtimeSessionId === "ses_processkill123");
   kill(d); await new Promise(r => d.once("exit", r));
   // The fake runtime still reports an active session, so restart must retain uncertainty and avoid replay.
   d = daemon(f); await ready(sock);

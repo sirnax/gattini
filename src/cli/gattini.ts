@@ -10,7 +10,7 @@ const PROTOCOL_VERSION = 1;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 
-type Command = "start" | "status" | "result" | "cancel";
+type Command = "start" | "run" | "followup" | "review" | "status" | "result" | "cancel" | "cleanup.preview" | "approvals.list" | "approve" | "deny";
 type JsonObject = Record<string, unknown>;
 interface Response {
   protocolVersion: number;
@@ -29,10 +29,18 @@ class CliError extends Error {
 function usage(): string {
   return [
     "Usage:",
-    "  gattini start --task-file PATH --idempotency-key KEY [--role ROLE] [--json]",
+    "  gattini start --task-file PATH --idempotency-key KEY [--role ROLE] [--require-approval] [--json]",
+    "  gattini run --task-file PATH --idempotency-key KEY [start options] [--poll-ms 100..5000] [--cancel-on-interrupt] [--json]",
+    "  gattini start --task-file PATH --idempotency-key KEY --role code --repo PATH --base-sha SHA --checks-file PATH --trusted-local-code --require-approval [--json]",
     "  gattini status JOB_ID [--json]",
-    "  gattini result JOB_ID [--json]",
+    "  gattini followup JOB_ID --task-file PATH --idempotency-key KEY [--json]",
+    "  gattini review JOB_ID --idempotency-key KEY [--json]",
+    "  gattini result JOB_ID [--attempt-id ID] [--json]",
     "  gattini cancel JOB_ID [--json]",
+    "  gattini cleanup preview [JOB_ID] [--json]",
+    "  gattini approvals list [--json]",
+    "  gattini approve APPROVAL_ID [--json]",
+    "  gattini deny APPROVAL_ID [--json]",
   ].join("\n");
 }
 
@@ -43,22 +51,30 @@ function nonEmpty(value: string | undefined, label: string, max = 256): string {
   return value;
 }
 
-function parseArgs(argv: string[]): { command: Command; params: JsonObject; json: boolean } {
-  const command = argv[0];
-  if (command !== "start" && command !== "status" && command !== "result" && command !== "cancel") {
+function parseArgs(argv: string[]): { command: Command; params: JsonObject; json: boolean; pollMs: number; cancelOnInterrupt: boolean } {
+  const command = argv[0] === "approvals" && argv[1] === "list" ? "approvals.list"
+    : argv[0] === "cleanup" && argv[1] === "preview" ? "cleanup.preview" : argv[0];
+  if (command !== "start" && command !== "run" && command !== "followup" && command !== "review" && command !== "status" && command !== "result" && command !== "cancel" && command !== "cleanup.preview" && command !== "approvals.list" && command !== "approve" && command !== "deny") {
     throw new CliError(`Unknown command.\n${usage()}`);
   }
-  const args = argv.slice(1);
+  const args = argv.slice(command === "approvals.list" || command === "cleanup.preview" ? 2 : 1);
   let json = false;
   if (args.includes("--json")) {
     json = true;
     args.splice(args.indexOf("--json"), 1);
   }
-  if (command === "start") {
+  if (command === "start" || command === "run") {
+    const cancelOnInterrupt = args.includes("--cancel-on-interrupt");
+    if (cancelOnInterrupt) args.splice(args.indexOf("--cancel-on-interrupt"), 1);
+    if (cancelOnInterrupt && command !== "run") throw new CliError("--cancel-on-interrupt requires run");
+    const requireApproval = args.includes("--require-approval");
+    if (requireApproval) args.splice(args.indexOf("--require-approval"), 1);
+    const trustedLocal = args.includes("--trusted-local-code");
+    if (trustedLocal) args.splice(args.indexOf("--trusted-local-code"), 1);
     const values = new Map<string, string>();
     for (let i = 0; i < args.length; i += 1) {
       const flag = args[i];
-      if (flag !== "--task-file" && flag !== "--idempotency-key" && flag !== "--role") {
+      if (flag !== "--task-file" && flag !== "--idempotency-key" && flag !== "--role" && flag !== "--repo" && flag !== "--base-sha" && flag !== "--checks-file" && flag !== "--poll-ms") {
         throw new CliError(`Unexpected argument: ${flag ?? ""}\n${usage()}`);
       }
       if (values.has(flag)) throw new CliError(`Duplicate option: ${flag}`);
@@ -67,15 +83,56 @@ function parseArgs(argv: string[]): { command: Command; params: JsonObject; json
       values.set(flag, value);
     }
     if (!values.has("--task-file") || !values.has("--idempotency-key")) {
-      throw new CliError(`start requires --task-file and --idempotency-key\n${usage()}`);
+      throw new CliError(`${command} requires --task-file and --idempotency-key\n${usage()}`);
     }
+    if (command !== "run" && values.has("--poll-ms")) throw new CliError("--poll-ms requires run");
+    const pollText = values.get("--poll-ms") ?? "500";
+    if (!/^[0-9]+$/.test(pollText) || Number(pollText) < 100 || Number(pollText) > 5000) throw new CliError("--poll-ms must be an integer from 100 to 5000");
+    const pollMs = Number(pollText);
     const taskFile = nonEmpty(values.get("--task-file"), "Task file path", 4096);
     const idempotencyKey = nonEmpty(values.get("--idempotency-key"), "Idempotency key", 128);
     const role = nonEmpty(values.get("--role") ?? "code", "Role", 128);
-    return { command, params: { taskFile, idempotencyKey, role }, json };
+    if (trustedLocal && (role !== "code" || !requireApproval || !values.has("--repo") || !values.has("--base-sha") || !values.has("--checks-file"))) {
+      throw new CliError("Trusted local code requires --role code, --repo, --base-sha, --checks-file, and --require-approval");
+    }
+    if (!trustedLocal && ["--repo", "--base-sha", "--checks-file"].some(flag => values.has(flag))) {
+      throw new CliError("Repository and checks options require --trusted-local-code");
+    }
+    return { command, params: { taskFile, idempotencyKey, role, ...(requireApproval ? { requireApproval: true } : {}),
+      ...(trustedLocal ? { trustedLocal: true, repositoryPath: nonEmpty(values.get("--repo"), "Repository path", 4096),
+        baseSha: nonEmpty(values.get("--base-sha"), "Base SHA", 128), checksFile: nonEmpty(values.get("--checks-file"), "Checks file", 4096) } : {}) }, json, pollMs, cancelOnInterrupt };
   }
-  if (args.length !== 1) throw new CliError(`${command} requires exactly one JOB_ID\n${usage()}`);
-  return { command, params: { jobId: nonEmpty(args[0], "Job ID", 128) }, json };
+  if (command === "approvals.list") {
+    if (args.length) throw new CliError(`approvals list takes no arguments\n${usage()}`);
+    return { command, params: {}, json, pollMs: 500, cancelOnInterrupt: false };
+  }
+  if (command === "cleanup.preview") {
+    if (args.length > 1) throw new CliError(`cleanup preview accepts at most one job ID\n${usage()}`);
+    return { command, params: args.length ? { jobId: nonEmpty(args[0], "Job ID", 128) } : {},
+      json, pollMs: 500, cancelOnInterrupt: false };
+  }
+  if (command === "followup" || command === "review" || command === "result") {
+    const jobId = nonEmpty(args.shift(), "Job ID", 128);
+    const allowed = command === "followup" ? ["--task-file", "--idempotency-key"] : command === "review" ? ["--idempotency-key"] : ["--attempt-id"];
+    const values = new Map<string, string>();
+    for (let i = 0; i < args.length; i += 1) {
+      const flag = args[i];
+      if (!flag || !allowed.includes(flag) || values.has(flag)) throw new CliError(`Unexpected or duplicate argument: ${flag ?? ""}`);
+      const value = args[++i];
+      if (value === undefined || value.startsWith("--")) throw new CliError(`Missing value for ${flag}`);
+      values.set(flag, value);
+    }
+    if (command === "followup" && (!values.has("--task-file") || !values.has("--idempotency-key"))) throw new CliError("followup requires --task-file and --idempotency-key");
+    if (command === "review" && !values.has("--idempotency-key")) throw new CliError("review requires --idempotency-key");
+    return { command, params: { jobId,
+      ...(values.has("--task-file") ? { taskFile: nonEmpty(values.get("--task-file"), "Task file", 4096) } : {}),
+      ...(values.has("--idempotency-key") ? { idempotencyKey: nonEmpty(values.get("--idempotency-key"), "Idempotency key", 128) } : {}),
+      ...(values.has("--attempt-id") ? { attemptId: nonEmpty(values.get("--attempt-id"), "Attempt ID", 128) } : {}) },
+      json, pollMs: 500, cancelOnInterrupt: false };
+  }
+  if (args.length !== 1) throw new CliError(`${command} requires exactly one ID\n${usage()}`);
+  if (command === "approve" || command === "deny") return { command, params: { approvalId: nonEmpty(args[0], "Approval ID", 128) }, json, pollMs: 500, cancelOnInterrupt: false };
+  return { command, params: { jobId: nonEmpty(args[0], "Job ID", 128) }, json, pollMs: 500, cancelOnInterrupt: false };
 }
 
 function socketPath(): string {
@@ -169,12 +226,87 @@ function safeText(value: unknown): string {
     .replace(/[\u0000-\u001f\u007f]/g, " ");
 }
 
+async function callDaemon(path: string, method: string, params: JsonObject): Promise<unknown> {
+  const response = await requestSocket(path, { protocolVersion: PROTOCOL_VERSION, requestId: randomUUID(), method, params });
+  if (!response.ok) {
+    const code = response.error?.code ?? "PROTOCOL_ERROR";
+    throw new CliError(response.error?.message ?? "Daemon request failed", code === "INVALID_REQUEST" ? 2 : code === "APPROVAL_REQUIRED" ? 4 : 3, code);
+  }
+  return response.result;
+}
+
+function record(value: unknown): JsonObject {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new CliError("Daemon returned an invalid result", 3, "PROTOCOL_ERROR");
+  return value as JsonObject;
+}
+
+function resultExitCode(value: unknown): number {
+  const envelope = record(value);
+  const result = envelope.result && typeof envelope.result === "object" && !Array.isArray(envelope.result) ? envelope.result as JsonObject : null;
+  return envelope.state === "failed" || envelope.state === "cancelled" || envelope.state === "interrupted" ||
+    result?.execution === "failed" || result?.acceptance === "failed" ? 1 : 0;
+}
+
+async function runJob(path: string, startedValue: unknown, pollMs: number, cancelOnInterrupt: boolean): Promise<{ value: unknown; exitCode: number } | null> {
+  const started = record(startedValue);
+  const jobId = started.jobId;
+  if (typeof jobId !== "string" || !jobId) throw new CliError("Daemon did not return a job ID", 3, "PROTOCOL_ERROR");
+  let interrupted: NodeJS.Signals | null = null;
+  let wake: (() => void) | undefined;
+  let cancelPromise: Promise<unknown> | undefined;
+  const onSignal = (signal: NodeJS.Signals): void => {
+    if (interrupted) return;
+    interrupted = signal;
+    if (cancelOnInterrupt) cancelPromise = callDaemon(path, "cancel", { jobId }).catch(error => {
+      process.stderr.write(`Could not cancel job ${safeText(jobId)}: ${safeText(error instanceof Error ? error.message : "unknown error")}\n`);
+    });
+    wake?.();
+  };
+  const onInt = (): void => onSignal("SIGINT");
+  const onTerm = (): void => onSignal("SIGTERM");
+  process.on("SIGINT", onInt);
+  process.on("SIGTERM", onTerm);
+  try {
+    let state = started.state;
+    while (!interrupted) {
+      if (typeof state !== "string" || !["queued", "awaiting-approval", "running", "cancelling", "cancelled", "completed", "failed", "interrupted"].includes(state)) {
+        throw new CliError(`Daemon returned an invalid state for job ${jobId}`, 3, "PROTOCOL_ERROR");
+      }
+      if (state === "awaiting-approval") return { value: { jobId, state, ...(typeof started.approvalId === "string" ? { approvalId: started.approvalId } : {}) }, exitCode: 4 };
+      if (state === "completed" || state === "failed" || state === "cancelled" || state === "interrupted") {
+        const value = await callDaemon(path, "result", { jobId });
+        if (record(value).jobId !== jobId) throw new CliError(`Daemon returned a different result ID for job ${jobId}`, 3, "PROTOCOL_ERROR");
+        return { value, exitCode: resultExitCode(value) };
+      }
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(() => { wake = undefined; resolve(); }, pollMs);
+        wake = () => { clearTimeout(timer); wake = undefined; resolve(); };
+      });
+      if (interrupted) break;
+      try {
+        const status = record(await callDaemon(path, "status", { jobId }));
+        if (status.jobId !== jobId) throw new CliError("Daemon returned a different status ID", 3, "PROTOCOL_ERROR");
+        state = status.state;
+      } catch (error) {
+        throw new CliError(`Job ${jobId} remains durable; status request failed: ${error instanceof Error ? error.message : "unknown error"}`, 3, error instanceof CliError ? error.code : "DAEMON_UNAVAILABLE");
+      }
+    }
+    if (cancelPromise) await cancelPromise;
+    process.stderr.write(`Job ${safeText(jobId)} ${cancelOnInterrupt ? "cancellation requested" : "continues"}; inspect it with status/result.\n`);
+    process.exitCode = interrupted === "SIGTERM" ? 143 : 130;
+    return null;
+  } finally {
+    process.off("SIGINT", onInt);
+    process.off("SIGTERM", onTerm);
+  }
+}
+
 async function main(): Promise<void> {
   let json = process.argv.includes("--json");
   try {
     const parsed = parseArgs(process.argv.slice(2));
     json = parsed.json;
-    if (parsed.command === "start") {
+    if (parsed.command === "start" || parsed.command === "run" || parsed.command === "followup") {
       const path = parsed.params.taskFile as string;
       let task: string;
       try {
@@ -188,36 +320,35 @@ async function main(): Promise<void> {
       if (task.trim().length === 0) throw new CliError("Task file must not be empty");
       if (task.length > 16_384) throw new CliError("Task file exceeds the 16,384 character task limit");
       const { taskFile: _taskFile, ...params } = parsed.params;
+      if (typeof params.checksFile === "string") {
+        try {
+          const bytes = await readFile(params.checksFile);
+          if (bytes.byteLength > 16_384) throw new CliError("Checks file exceeds 16 KiB");
+          params.verificationCommands = JSON.parse(bytes.toString("utf8")) as unknown;
+        } catch (error) {
+          if (error instanceof CliError) throw error;
+          throw new CliError("Could not read a JSON checks file");
+        }
+        delete params.checksFile;
+      }
       Object.assign(params, { task });
       parsed.params = params;
     }
-    const requestId = randomUUID();
-    const response = await requestSocket(socketPath(), {
-      protocolVersion: PROTOCOL_VERSION,
-      requestId,
-      method: parsed.command,
-      params: parsed.params,
-    });
-    if (!response.ok) {
-      const message = response.error?.message ?? "Daemon request failed";
-      if (json) process.stdout.write(`${JSON.stringify({ error: response.error })}\n`);
-      else process.stderr.write(`${safeText(message)}\n`);
-      process.exitCode = response.error?.code === "TASK_FAILED" ? 1 : response.error?.code === "APPROVAL_REQUIRED" ? 4 : 3;
-      return;
+    const path = socketPath();
+    let value = await callDaemon(path, parsed.command === "run" ? "start" : parsed.command, parsed.params);
+    if (parsed.command === "run") {
+      const outcome = await runJob(path, value, parsed.pollMs, parsed.cancelOnInterrupt);
+      if (!outcome) return;
+      value = outcome.value;
+      process.exitCode = outcome.exitCode;
     }
-    if (json) process.stdout.write(`${JSON.stringify(response.result)}\n`);
-    else if (parsed.command === "cancel" && typeof response.result === "object" && response.result !== null) {
-      const result = response.result as JsonObject;
+    if (json) process.stdout.write(`${JSON.stringify(value)}\n`);
+    else if (parsed.command === "cancel" && typeof value === "object" && value !== null) {
+      const result = value as JsonObject;
       const state = typeof result.state === "string" ? result.state : "unknown";
       process.stdout.write(`Job ${safeText(parsed.params.jobId)}: ${safeText(state)}\n`);
-    } else process.stdout.write(`${safeText(response.result)}\n`);
-    if (parsed.command === "result" && typeof response.result === "object" && response.result !== null) {
-      const envelope = response.result as JsonObject;
-      const result = typeof envelope.result === "object" && envelope.result !== null
-        ? envelope.result as JsonObject
-        : envelope;
-      if (envelope.state === "failed" || result.execution === "failed" || result.acceptance === "failed") process.exitCode = 1;
-    }
+    } else process.stdout.write(`${safeText(value)}\n`);
+    if (parsed.command === "result") process.exitCode = resultExitCode(value);
   } catch (error) {
     const failure = error instanceof CliError ? error : new CliError("Unexpected CLI error", 3, "INTERNAL_ERROR");
     if (json) process.stderr.write(`${JSON.stringify({ error: { code: failure.code, message: failure.message } })}\n`);

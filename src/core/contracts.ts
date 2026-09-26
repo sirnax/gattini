@@ -1,4 +1,6 @@
 /** Versioned, dependency-free contracts shared by runtime adapters. */
+import type { SnapshotEvidence } from "./coding.js";
+import type { UsageProvenance } from "./usage.js";
 
 export type Capability =
   | "headless"
@@ -59,6 +61,9 @@ export interface RuntimeResult {
   changedFiles: string[];
   verification: Array<{ command: string; exitCode: number | null }>;
   limitations: string[];
+  snapshot?: SnapshotEvidence;
+  usage?: UsageProvenance;
+  escalation?: { code: "RETRY_EXHAUSTED"; reason: string };
 }
 
 export class ContractError extends TypeError {
@@ -160,7 +165,7 @@ export function parseRuntimeEvent(value: unknown): RuntimeEvent {
 
 export function parseRuntimeResult(value: unknown): RuntimeResult {
   if (!isRecord(value)) throw new ContractError("Result must be an object");
-  exactKeys(value, ["schemaVersion", "jobId", "execution", "acceptance", "summary", "changedFiles", "verification", "limitations"]);
+  exactKeys(value, ["schemaVersion", "jobId", "execution", "acceptance", "summary", "changedFiles", "verification", "limitations"], ["snapshot", "usage", "escalation"]);
   if (value.schemaVersion !== 1) throw new ContractError("Unsupported result schemaVersion");
   nonEmptyString(value.jobId, "result.jobId", 128);
   if (value.execution !== "completed" && value.execution !== "failed") throw new ContractError("Invalid execution outcome");
@@ -174,6 +179,53 @@ export function parseRuntimeResult(value: unknown): RuntimeResult {
     exactKeys(item, ["command", "exitCode"]);
     nonEmptyString(item.command, `verification[${index}].command`, 4_096);
     if (item.exitCode !== null && (!Number.isInteger(item.exitCode) || (item.exitCode as number) < 0)) throw new ContractError(`verification[${index}].exitCode must be non-negative or null`);
+  }
+  if (value.snapshot !== undefined) {
+    if (!isRecord(value.snapshot)) throw new ContractError("snapshot must be an object");
+    exactKeys(value.snapshot, ["worktreePath", "baseSha", "snapshotSha", "diffSha256", "changedFiles", "checks", "acceptance", "limitations"], ["artifact"]);
+    for (const key of ["worktreePath", "baseSha", "snapshotSha", "diffSha256"]) nonEmptyString(value.snapshot[key], `snapshot.${key}`, 4_096);
+    stringArray(value.snapshot.changedFiles, "snapshot.changedFiles");
+    stringArray(value.snapshot.limitations, "snapshot.limitations");
+    if (value.snapshot.artifact !== undefined) {
+      if (!isRecord(value.snapshot.artifact)) throw new ContractError("snapshot.artifact must be an object");
+      exactKeys(value.snapshot.artifact, ["path", "sha256", "diffPath", "diffFileSha256"]);
+      for (const key of ["path", "sha256", "diffPath", "diffFileSha256"]) nonEmptyString(value.snapshot.artifact[key], `snapshot.artifact.${key}`, 4096);
+    }
+    if (!["passed", "failed", "unverified"].includes(value.snapshot.acceptance as string)) throw new ContractError("Invalid snapshot acceptance");
+    if (!Array.isArray(value.snapshot.checks) || value.snapshot.checks.length > 100) throw new ContractError("snapshot.checks must contain at most 100 entries");
+    for (const [index, check] of value.snapshot.checks.entries()) {
+      if (!isRecord(check)) throw new ContractError(`snapshot.checks[${index}] must be an object`);
+      exactKeys(check, ["argv", "cwd", "exitCode", "stdout", "stderr", "truncated", "timedOut"]);
+      stringArray(check.argv, `snapshot.checks[${index}].argv`, 32);
+      nonEmptyString(check.cwd, `snapshot.checks[${index}].cwd`, 4_096);
+      if (check.exitCode !== null && (!Number.isInteger(check.exitCode) || (check.exitCode as number) < 0)) throw new ContractError(`snapshot.checks[${index}].exitCode is invalid`);
+      for (const key of ["stdout", "stderr"]) if (typeof check[key] !== "string" || check[key].length > 16_384) throw new ContractError(`snapshot.checks[${index}].${key} is too large`);
+      if (typeof check.truncated !== "boolean" || typeof check.timedOut !== "boolean") throw new ContractError(`snapshot.checks[${index}] flags are invalid`);
+    }
+    if (value.snapshot.acceptance === "passed" && (value.snapshot.checks.length === 0 ||
+        value.snapshot.checks.some(check => !isRecord(check) || check.exitCode !== 0 || check.timedOut === true))) {
+      throw new ContractError("Passed acceptance requires successful independent checks");
+    }
+    if (value.acceptance !== value.snapshot.acceptance || JSON.stringify(value.changedFiles) !== JSON.stringify(value.snapshot.changedFiles)) {
+      throw new ContractError("Result and snapshot acceptance or changed files differ");
+    }
+  }
+  if (value.usage !== undefined) {
+    if (!isRecord(value.usage)) throw new ContractError("usage must be an object");
+    exactKeys(value.usage, ["runtime", "sessionId", "costUsd", "inputTokens", "outputTokens"]);
+    if (value.usage.runtime !== "opencode") throw new ContractError("usage.runtime is unsupported");
+    nonEmptyString(value.usage.sessionId, "usage.sessionId", 128);
+    for (const key of ["costUsd", "inputTokens", "outputTokens"] as const) {
+      const measure = value.usage[key];
+      if (measure !== null && (typeof measure !== "number" || !Number.isFinite(measure) || measure < 0 ||
+          (key !== "costUsd" && !Number.isSafeInteger(measure)))) throw new ContractError(`usage.${key} is invalid`);
+    }
+  }
+  if (value.escalation !== undefined) {
+    if (!isRecord(value.escalation)) throw new ContractError("escalation must be an object");
+    exactKeys(value.escalation, ["code", "reason"]);
+    if (value.escalation.code !== "RETRY_EXHAUSTED") throw new ContractError("escalation.code is unsupported");
+    nonEmptyString(value.escalation.reason, "escalation.reason", 512);
   }
   return value as unknown as RuntimeResult;
 }
