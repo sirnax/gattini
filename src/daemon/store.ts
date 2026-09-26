@@ -9,11 +9,26 @@ import { parseVerificationCommands, type CodeJobInput, type CodeRoleConfig, type
 import { WorktreeManager } from "../environments/worktree.js";
 import { OpenCodeUsageAccumulator } from "../core/usage.js";
 import { parseCodexRoleConfig, type CodexRoleConfig } from "../core/codex-role-config.js";
+import { parseWorkerCodeRoleConfig } from "../core/code-policy.js";
 
 type State = "queued" | "awaiting-approval" | "running" | "cancelling" | "cancelled" | "completed" | "failed" | "interrupted";
 type JobRow = { id: string; idempotency_key: string; input_digest: string; state: State; created_at: string; updated_at: string; result_json: string | null; runtime_session_id: string | null; resolved_json: string | null; scope_key: string | null; config_json: string; job_json: string };
 type ApprovalRow = { id: string; job_id: string; action_json: string; action_digest: string; state: "pending" | "approved" | "denied" | "expired"; created_at: string; expires_at: string; decided_at: string | null; actor: string | null };
 type CodeRow = { job_id: string; input_json: string; worktree_path: string | null; state: "preparing" | "ready" | "failed" };
+
+function savedCodeConfig(value: unknown): CodeRoleConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Saved code role config is invalid");
+  const saved = value as Record<string, unknown>;
+  if (saved.runtime !== "opencode-code" && saved.runtime !== "codex-code") throw new Error("Saved code runtime is unsupported");
+  return parseWorkerCodeRoleConfig({ ...saved, runtime: saved.runtime === "opencode-code" ? "opencode" : "codex" });
+}
+
+function codeActionProfile(config: CodeRoleConfig): Record<string, unknown> {
+  return config.runtime === "opencode"
+    ? { agent: config.agent, model: config.model, serverUrl: config.serverUrl, policy: "opencode-v2.0.18-deny-all-read-glob-grep" }
+    : { runtime: "codex", model: config.model, modelProvider: config.modelProvider,
+        executable: config.executable, policy: "codex-0.157.1-read-only-app-server" };
+}
 
 export class JobStore {
   private readonly db: DatabaseSync;
@@ -273,12 +288,12 @@ export class JobStore {
     return { jobId: id, state: requireApproval ? "awaiting-approval" : "queued", deduplicated: false, ...(approval ? { approvalId: approval.id } : {}) };
   }
 
-  enqueueCodexReview(input: { task: string; idempotencyKey: string; config: CodexRoleConfig }): { jobId: string; state: State; deduplicated: boolean } {
+  enqueueCodexReview(input: { task: string; idempotencyKey: string; role: "reviewer" | "codex-reviewer"; config: CodexRoleConfig }): { jobId: string; state: State; deduplicated: boolean } {
     const config = parseCodexRoleConfig(input.config);
-    const digest = createHash("sha256").update(JSON.stringify({ task: input.task, role: "codex-reviewer", config })).digest("hex");
+    const digest = createHash("sha256").update(JSON.stringify({ task: input.task, role: input.role, config })).digest("hex");
     const id = randomUUID();
     const now = new Date().toISOString();
-    const job = parseJob({ schemaVersion: 1, id, parentWorkflowId: null, role: "codex-reviewer", task: input.task,
+    const job = parseJob({ schemaVersion: 1, id, parentWorkflowId: null, role: input.role, task: input.task,
       acceptanceCriteria: [], capabilities: ["headless", "explicit-session", "event-stream", "cancellation", "permission-enforcement"],
       inputReferences: [], repository: null, allowedScope: [], verificationCommands: [],
       limits: { timeoutSeconds: 60, maxEvents: 1000 }, approvalPolicy: "none" });
@@ -314,7 +329,11 @@ export class JobStore {
     this.transaction(() => {
       this.assertAttempt(jobId, attemptId);
       const row = this.rowById(jobId);
-      const config = parseCodexRoleConfig(JSON.parse(row.config_json));
+      const storedConfig = JSON.parse(row.config_json) as { runtime?: string };
+      const config = storedConfig.runtime === "codex-code"
+        ? savedCodeConfig(storedConfig)
+        : parseCodexRoleConfig(storedConfig);
+      if (config.runtime !== "codex") throw new Error("Saved Codex runtime is invalid");
       if (!["running", "cancelling"].includes(row.state) || row.runtime_session_id || identity.model !== config.model || identity.modelProvider !== config.modelProvider ||
           !identity.threadId || !identity.turnId || !identity.sessionId || identity.threadId.length > 128 || identity.turnId.length > 128 || identity.sessionId.length > 128) {
         throw new Error("Codex runtime identity does not match the claimed job");
@@ -392,7 +411,7 @@ export class JobStore {
       limits: { timeoutSeconds: 300, maxEvents: 1000 }, approvalPolicy: "manual" });
     this.transaction(() => {
       this.db.prepare("INSERT INTO jobs (id,idempotency_key,input_digest,state,job_json,config_json,created_at,updated_at,scope_key) VALUES (?,?,?,?,?,?,?,?,?)")
-        .run(id, input.idempotencyKey, digest, "awaiting-approval", JSON.stringify(job), JSON.stringify({ ...config, runtime: "opencode-code" }), now, now, input.repositoryPath);
+        .run(id, input.idempotencyKey, digest, "awaiting-approval", JSON.stringify(job), JSON.stringify({ ...config, runtime: config.runtime === "codex" ? "codex-code" : "opencode-code" }), now, now, input.repositoryPath);
       this.db.prepare("INSERT INTO code_jobs (job_id,input_json,state) VALUES (?,?,?)").run(id, JSON.stringify(normalized), "preparing");
     });
     let worktreePath: string;
@@ -407,7 +426,7 @@ export class JobStore {
     }
     const action = { kind: "code-proposal-launch", inputDigest: digest, task: input.task,
       repositoryPath: input.repositoryPath, baseSha: input.baseSha, worktreePath,
-      agent: config.agent, model: config.model, serverUrl: config.serverUrl, policy: "opencode-v2.0.18-deny-all-read-glob-grep",
+      ...codeActionProfile(config),
       verificationCommands: commands, trustedLocal: true };
     this.transaction(() => {
       this.db.prepare("UPDATE code_jobs SET state = 'ready', worktree_path = ? WHERE job_id = ?").run(worktreePath, id);
@@ -424,7 +443,7 @@ export class JobStore {
       WHERE jobs.state = 'queued' AND code_jobs.state = 'ready' AND code_jobs.worktree_path IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.job_id = jobs.id)`).all() as Array<{ id: string; config_json: string; input_json: string; worktree_path: string }>;
     return rows.map(row => ({ jobId: row.id, input: JSON.parse(row.input_json) as CodeJobInput,
-      config: JSON.parse(row.config_json) as CodeRoleConfig, worktreePath: row.worktree_path }));
+      config: savedCodeConfig(JSON.parse(row.config_json)), worktreePath: row.worktree_path }));
   }
 
   pendingReviews(): Array<{ jobId: string; task: string; config: unknown }> {
@@ -571,14 +590,12 @@ export class JobStore {
       if (code) {
         if (code.state !== "ready" || !code.worktree_path) throw new ProtocolError("APPROVAL_STALE", "Coding worktree is not ready");
         const input = JSON.parse(code.input_json) as CodeJobInput;
-        const savedConfig = JSON.parse(row.config_json) as CodeRoleConfig;
-        const config: CodeRoleConfig = { ...savedConfig, runtime: "opencode" };
+        const config = savedCodeConfig(JSON.parse(row.config_json));
         const proposed = this.db.prepare("SELECT * FROM code_proposals WHERE job_id = ?").get(row.id) as { proposal_json: string; path: string; before_sha: string; after_sha: string; worktree_sha: string; session_id: string; state: string } | undefined;
         if (proposed) {
           if (proposed.state !== "proposed" || row.runtime_session_id !== proposed.session_id) throw new ProtocolError("APPROVAL_STALE", "Proposed patch or session changed");
           const action = { kind: "code-apply", inputDigest: row.input_digest, worktreePath: code.worktree_path,
-            baseSha: input.baseSha, agent: config.agent, model: config.model, serverUrl: config.serverUrl,
-            policy: "opencode-v2.0.18-deny-all-read-glob-grep", attemptId: (this.db.prepare("SELECT id FROM attempts WHERE job_id = ?").get(row.id) as { id: string }).id,
+            baseSha: input.baseSha, ...codeActionProfile(config), attemptId: (this.db.prepare("SELECT id FROM attempts WHERE job_id = ?").get(row.id) as { id: string }).id,
             sessionId: proposed.session_id,
             path: proposed.path, beforeSha256: proposed.before_sha, afterSha256: proposed.after_sha, worktreeSha: proposed.worktree_sha,
             proposalSha256: createHash("sha256").update(proposed.proposal_json).digest("hex"), verificationCommands: input.verificationCommands };
@@ -599,7 +616,7 @@ export class JobStore {
         const digest = createHash("sha256").update(JSON.stringify({ input, config })).digest("hex");
         const action = { kind: "code-proposal-launch", inputDigest: digest, task: input.task,
           repositoryPath: input.repositoryPath, baseSha: input.baseSha, worktreePath: code.worktree_path,
-          agent: config.agent, model: config.model, serverUrl: config.serverUrl, policy: "opencode-v2.0.18-deny-all-read-glob-grep",
+          ...codeActionProfile(config),
           verificationCommands: parseVerificationCommands(input.verificationCommands), trustedLocal: true };
         if (digest !== row.input_digest || job.task !== input.task || job.repository?.baseSha !== input.baseSha ||
             approval.action_json !== JSON.stringify(action) ||
@@ -637,17 +654,17 @@ export class JobStore {
   }
 
   completeProposal(jobId: string, attemptId: string, sessionId: string, proposal: string, worktreeSha: string,
-    patch: { path: string; beforeSha256: string; afterSha256: string }): string {
+    patch: { path: string; beforeSha256: string; afterSha256: string },
+    codexUsage?: { inputTokens: number | null; outputTokens: number | null }): string {
     this.assertAttempt(jobId, attemptId);
     return this.transaction(() => {
       const row = this.rowById(jobId);
       const code = this.db.prepare("SELECT * FROM code_jobs WHERE job_id = ?").get(jobId) as CodeRow;
       if (row.state !== "running" || row.runtime_session_id !== sessionId || !code?.worktree_path) throw new Error("Proposal session or worktree is not claimed");
       const input = JSON.parse(code.input_json) as CodeJobInput;
-      const config = JSON.parse(row.config_json) as CodeRoleConfig;
+      const config = savedCodeConfig(JSON.parse(row.config_json));
       const action = { kind: "code-apply", inputDigest: row.input_digest, worktreePath: code.worktree_path,
-        baseSha: input.baseSha, agent: config.agent, model: config.model, serverUrl: config.serverUrl,
-        policy: "opencode-v2.0.18-deny-all-read-glob-grep", attemptId, sessionId,
+        baseSha: input.baseSha, ...codeActionProfile(config), attemptId, sessionId,
         path: patch.path, beforeSha256: patch.beforeSha256, afterSha256: patch.afterSha256, worktreeSha,
         proposalSha256: createHash("sha256").update(proposal).digest("hex"), verificationCommands: input.verificationCommands };
       const now = new Date().toISOString();
@@ -657,6 +674,12 @@ export class JobStore {
       this.db.prepare("INSERT INTO approvals (id,job_id,action_json,action_digest,state,created_at,expires_at) VALUES (?,?,?,?,?,?,?)")
         .run(approvalId, jobId, JSON.stringify(action), createHash("sha256").update(JSON.stringify(action)).digest("hex"), "pending", now, new Date(Date.now() + 15 * 60_000).toISOString());
       this.db.prepare("UPDATE attempts SET phase = 'proposed' WHERE id = ?").run(attemptId);
+      if (config.runtime === "codex") {
+        const identity = row.resolved_json ? JSON.parse(row.resolved_json) as Record<string, unknown> : null;
+        if (!identity || identity.threadId !== sessionId || !identity.sessionId || !codexUsage) throw new Error("Codex proposal identity or usage is missing");
+        this.db.prepare("UPDATE jobs SET resolved_json = ? WHERE id = ?")
+          .run(JSON.stringify({ ...identity, usage: codexUsage }), jobId);
+      }
       this.db.prepare("UPDATE jobs SET state = 'awaiting-approval', updated_at = ? WHERE id = ?").run(now, jobId);
       return approvalId;
     });
@@ -668,7 +691,7 @@ export class JobStore {
       JOIN code_jobs ON code_jobs.job_id = jobs.id JOIN code_proposals ON code_proposals.job_id = jobs.id
       WHERE jobs.state = 'queued' AND code_proposals.state = 'approved'`).all() as Array<{ id: string; config_json: string; input_json: string; worktree_path: string; proposal_json: string; session_id: string }>;
     return rows.map(row => ({ jobId: row.id, input: JSON.parse(row.input_json) as CodeJobInput,
-      config: { ...JSON.parse(row.config_json) as CodeRoleConfig, runtime: "opencode" }, worktreePath: row.worktree_path,
+      config: savedCodeConfig(JSON.parse(row.config_json)), worktreePath: row.worktree_path,
       proposal: row.proposal_json, sessionId: row.session_id }));
   }
 
@@ -795,14 +818,25 @@ export class JobStore {
         JSON.stringify(artifact.changedFiles) !== JSON.stringify(snapshot.changedFiles) || !replacement?.content ||
         createHash("sha256").update(Buffer.from(replacement.content, "base64")).digest("hex") !== proposal.after_sha ||
         !snapshot.changedFiles.includes(proposal.path)) throw new Error("Retained snapshot differs from the approved patch or checks");
+    const config = savedCodeConfig(JSON.parse(row.config_json));
+    const codexResolved = config.runtime === "codex" && row.resolved_json
+      ? JSON.parse(row.resolved_json) as { sessionId?: string; model?: string; modelProvider?: string; cliVersion?: string; usage?: { inputTokens: number | null; outputTokens: number | null } }
+      : null;
+    if (config.runtime === "codex" && (!codexResolved?.sessionId || codexResolved.model !== config.model || codexResolved.modelProvider !== config.modelProvider || !codexResolved.usage)) {
+      throw new Error("Codex proposal result lost exact identity or usage");
+    }
+    const usage = codexResolved?.sessionId && codexResolved.usage
+      ? { runtime: "codex" as const, sessionId: codexResolved.sessionId, costUsd: null,
+          inputTokens: codexResolved.usage.inputTokens, outputTokens: codexResolved.usage.outputTokens }
+      : this.usageForAttempt(attemptId, sessionId);
     const result = parseRuntimeResult({ schemaVersion: 1, jobId, execution: "completed", acceptance: snapshot.acceptance,
       summary, changedFiles: snapshot.changedFiles,
       verification: snapshot.checks.map(check => ({ command: JSON.stringify(check.argv), exitCode: check.exitCode })),
       limitations: ["Trusted local coding runtime and verification have no host containment.", ...snapshot.limitations], snapshot,
-      usage: this.usageForAttempt(attemptId, sessionId) });
+      usage });
     this.transaction(() => {
       this.db.prepare("UPDATE jobs SET state = 'completed', result_json = ?, resolved_json = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(result), JSON.stringify(resolved), new Date().toISOString(), jobId);
+        .run(JSON.stringify(result), config.runtime === "codex" ? row.resolved_json : JSON.stringify(resolved), new Date().toISOString(), jobId);
       this.db.prepare("UPDATE attempts SET phase = 'completed' WHERE id = ?").run(attemptId);
       this.recordTurnResult(jobId, attemptId, result);
     });
@@ -882,6 +916,17 @@ export class JobStore {
         this.db.prepare("UPDATE attempts SET phase='cancelled' WHERE id=?").run(attempt.id);
         this.db.prepare("UPDATE jobs SET state='cancelled',updated_at=? WHERE id=?").run(now, jobId);
         return { jobId, state: "cancelled", runtimeSessionId: null, config: null };
+      }
+      // A finished read-only proposal has no live turn to interrupt. Stop the
+      // pending apply action locally, including the small queued-before-apply window.
+      const proposal = this.db.prepare("SELECT state FROM code_proposals WHERE job_id = ?").get(jobId) as { state: string } | undefined;
+      if ((row.state === "awaiting-approval" || row.state === "queued") &&
+          (proposal?.state === "proposed" || proposal?.state === "approved")) {
+        const now = new Date().toISOString();
+        this.db.prepare("UPDATE jobs SET state = 'cancelled', updated_at = ? WHERE id = ?").run(now, jobId);
+        this.db.prepare("UPDATE approvals SET state = 'denied', decided_at = ?, actor = 'cancellation' WHERE job_id = ? AND state = 'pending'").run(now, jobId);
+        if (attempt) this.db.prepare("UPDATE attempts SET phase = 'cancelled' WHERE id = ?").run(attempt.id);
+        return { jobId, state: "cancelled", runtimeSessionId: row.runtime_session_id, config: null };
       }
       if ((row.state === "queued" || row.state === "awaiting-approval") && !attempt) {
         this.db.prepare("UPDATE jobs SET state = 'cancelled', updated_at = ? WHERE id = ?").run(new Date().toISOString(), jobId);

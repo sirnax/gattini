@@ -5,7 +5,7 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 import { runReview, runReviewFollowup, type OpenCodeCliEvent, type ReviewRole } from "../src/adapters/opencode-cli.js";
 import { runProposal, type CodeCliEvent } from "../src/adapters/opencode-code.js";
-import type { CodeRoleConfig } from "../src/core/coding.js";
+import type { OpenCodeCodeRoleConfig } from "../src/core/coding.js";
 
 const SESSION_ID = "ses_timeout123";
 // The full suite launches many child processes concurrently; leave startup
@@ -61,7 +61,7 @@ function reviewRole(directory: string): ReviewRole {
     serverUrl: "http://127.0.0.1:4096", permissions: [] };
 }
 
-function codeRole(): CodeRoleConfig {
+function codeRole(): OpenCodeCodeRoleConfig {
   return { runtime: "opencode", agent: "reader", model: "provider/model", serverUrl: "http://127.0.0.1:4096" };
 }
 

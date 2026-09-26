@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
-import type { CodeRoleConfig } from "./coding.js";
+import type { CodeRoleConfig, CodexCodeRoleConfig, OpenCodeCodeRoleConfig } from "./coding.js";
 
 export class CodePolicyError extends Error {
   constructor(message: string) { super(message); this.name = "CodePolicyError"; }
@@ -23,7 +23,7 @@ function nonEmpty(value: unknown, label: string, max: number): asserts value is 
 const credentialLiteral = /(?:sk-[A-Za-z0-9_-]{12,}|(?:api[_-]?key|token|secret|password)\s*[:=]\s*\S{8,}|Bearer\s+[A-Za-z0-9._~-]{12,})/i;
 
 /** Parse private code-role JSON without filesystem or runtime side effects. */
-export function parseCodeRoleConfig(value: unknown): CodeRoleConfig {
+export function parseCodeRoleConfig(value: unknown): OpenCodeCodeRoleConfig {
   if (!isRecord(value)) throw new CodePolicyError("Code role config must be an object");
   exactKeys(value, ["runtime", "agent", "model", "serverUrl"], "Code role config");
   if (value.runtime !== "opencode") throw new CodePolicyError("Code role runtime must be opencode");
@@ -41,6 +41,24 @@ export function parseCodeRoleConfig(value: unknown): CodeRoleConfig {
     throw new CodePolicyError("Code role config must not contain credential literals");
   }
   return { runtime: "opencode", agent: value.agent, model: value.model, serverUrl: value.serverUrl };
+}
+
+/** Exact private role mapping for either guarded proposal backend. */
+export function parseWorkerCodeRoleConfig(value: unknown): CodeRoleConfig {
+  if (!isRecord(value)) throw new CodePolicyError("Code role config must be an object");
+  if (value.runtime === "opencode") return parseCodeRoleConfig(value);
+  exactKeys(value, ["runtime", "model", "modelProvider", "executable"], "Codex code role config");
+  if (value.runtime !== "codex") throw new CodePolicyError("Unsupported code role runtime");
+  nonEmpty(value.model, "Codex code model", 256);
+  nonEmpty(value.modelProvider, "Codex code modelProvider", 128);
+  nonEmpty(value.executable, "Codex code executable", 4_096);
+  if (value.executable !== "codex" && (!value.executable.startsWith("/") || value.executable.startsWith("//"))) {
+    throw new CodePolicyError("Codex code executable must be codex or an absolute path");
+  }
+  if ([value.model, value.modelProvider, value.executable].some(entry => credentialLiteral.test(entry))) {
+    throw new CodePolicyError("Code role config must not contain credential literals");
+  }
+  return value as unknown as CodexCodeRoleConfig;
 }
 
 export interface CodePermissionRule { action: string; resource: string; effect: "allow" | "deny" }

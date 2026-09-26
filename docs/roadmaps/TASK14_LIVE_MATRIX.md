@@ -1,0 +1,18 @@
+# Task 14 live conformance check — proposed, not authorized
+
+Status: offline preparation on 26 September 2026. The Task 13 single Codex job approval has been used. No Task 14 provider run is authorized by this note. Each row below needs the owner's specific approval and the normal automatic approval review. Gate B remains open until actual observations support both runtimes.
+
+## Disposable input and limits
+
+Use a new private `/private/tmp` root with two separate local Git clones of the same committed, one-file `math.mjs` fixture: `add(2, 3)` currently gives the wrong answer, while `math.test.mjs` expects 5. Keep a dirty tracked sentinel and an untracked sentinel in each source checkout. Use only non-secret fixture text. The code task requests the one-file fix; the review task asks for the result of `add(2, 3)` and the evidence used. Each Gattini job has one exact idempotency key, explicit model/provider and a maximum 60-second runtime turn where supported. Do not retry a provider run or fall back to another model automatically. The provider may not enforce a hard USD cap, so report token and USD usage when available and mark unknown values null.
+
+| Runtime | Code proposal and apply | Read-only review | Cancellation |
+| --- | --- | --- | --- |
+| OpenCode | One approved read-only proposal from the named V2.0.18 deny-all/read/glob/grep agent; inspect and separately approve the exact validated patch; run the direct-argv Node 24 test and retain snapshot/diff. | Same `role: reviewer` task and result shape as Codex under private `roles.json`; confirm exact agent/model/session, read-only policy and unchanged fixture. | One separate bounded review turn; request cancel by job ID while active; require exact session inactive plus interrupted status before `cancelled`. |
+| Codex | One approved read-only app-server proposal; inspect and separately approve the exact validated patch; run the same Node 24 test and retain snapshot/diff. | Same `role: reviewer` task and result shape as OpenCode under private `roles.json`; confirm returned model/provider/thread/turn, no approval grants and unchanged fixture. | One separate bounded read-only turn; request cancel by job ID while active; require matching interrupted turn before `cancelled`. |
+
+For every row, record installed/runtime versions, configured and returned identities, job/attempt/session IDs, exact terminal state, result schema, acceptance, token usage, reported USD cost or null, source/worktree hashes before and after, daemon restart behavior, and unsupported capabilities. The offline matrix supplies malformed response, identity mismatch, approval denial, crash/recovery and uncertain cancellation cases; a live turn does not replace those checks. A failed preflight or unavailable runtime stops that row without broadening permissions or changing configuration silently.
+
+## Preflight issue to resolve before OpenCode rows
+
+Read-only inspection on 26 September found installed `opencode v2.0.18` at `/opt/homebrew/bin/opencode`, while the existing loopback listener on `127.0.0.1:49374` was launched from a Homebrew `2.0.11` executable path. The reviewer adapter still pins CLI `2.0.16`; its effective-policy and exact-session semantics were observed live only at that version. Installed help alone does not establish CLI/service API pairing or policy compatibility. The OpenCode rows require a version-matched, policy-observed private service or a validated pairing with the existing service. Any change to the user's shared service or normal runtime configuration must be reviewed separately. Do not mark Task 14 or Checkpoint 5 complete from fake fixtures or the prior Task 13 Codex job.

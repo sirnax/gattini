@@ -15,12 +15,21 @@ export interface CodeJobInput {
   trustedLocal: true;
 }
 
-export interface CodeRoleConfig {
+export interface OpenCodeCodeRoleConfig {
   runtime: "opencode";
   agent: string;
   model: string;
   serverUrl: string;
 }
+
+export interface CodexCodeRoleConfig {
+  runtime: "codex";
+  model: string;
+  modelProvider: string;
+  executable: string;
+}
+
+export type CodeRoleConfig = OpenCodeCodeRoleConfig | CodexCodeRoleConfig;
 
 export interface VerificationCheckResult {
   argv: string[];

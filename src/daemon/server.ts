@@ -8,9 +8,10 @@ import { isTransientPreflightFailure, MAX_PREFLIGHT_ATTEMPTS } from "./retry.js"
 import { MAX_MESSAGE_BYTES, PROTOCOL_VERSION, ProtocolError, parseRequest, stringParam, type Request, type Response } from "../core/protocol.js";
 import { parseRoleConfig } from "../core/role-config.js";
 import { parseCodexRoleConfig, type CodexRoleConfig } from "../core/codex-role-config.js";
+import { parseWorkerReviewerConfig } from "../core/worker-role-config.js";
 import { enforceReviewerPolicy } from "../core/policy.js";
 import { getReviewSession, interruptReview, isReviewSessionActive, preflightReview, runReview, runReviewFollowup, type ReviewRole } from "../adapters/opencode-cli.js";
-import { parseCodeRoleConfig } from "../core/code-policy.js";
+import { parseWorkerCodeRoleConfig } from "../core/code-policy.js";
 import { parseVerificationCommands, type CodeJobInput, type CodeRoleConfig } from "../core/coding.js";
 import { getCodeSession, interruptCode, preflightProposal, runProposal } from "../adapters/opencode-code.js";
 import { WorktreeError, WorktreeManager } from "../environments/worktree.js";
@@ -19,6 +20,7 @@ import { applyValidatedPatch, validatePatch } from "../verification/validated-pa
 import { buildPinnedReviewPrompt, PinnedReviewError } from "../verification/pinned-review.js";
 import { previewOwnedCleanup } from "../environments/cleanup-preview.js";
 import { preflightCodexReview, startCodexReview, type CodexReviewHandle } from "../adapters/codex-app-server.js";
+import { startCodexProposal, type CodexProposalHandle } from "../adapters/codex-proposal.js";
 
 export function stateDirectory(): string {
   const override = process.env.GATTINI_STATE_DIR;
@@ -130,7 +132,7 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
     if (params.trustedLocal === true) {
       if (role !== "code" || params.requireApproval !== true) throw new ProtocolError("UNSUPPORTED_POLICY", "Trusted coding requires the code role and exact launch approval");
       let config: CodeRoleConfig;
-      try { config = parseCodeRoleConfig(JSON.parse(readFileSync(join(directory, "code-role.json"), "utf8"))); }
+      try { config = parseWorkerCodeRoleConfig(JSON.parse(readFileSync(join(directory, "code-role.json"), "utf8"))); }
       catch { throw new ProtocolError("CONFIG_INVALID", "A valid private code-role.json is required for trusted coding"); }
       let verificationCommands;
       try { verificationCommands = parseVerificationCommands(params.verificationCommands); }
@@ -143,9 +145,16 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
       throw new ProtocolError("INVALID_REQUEST", "Coding repository fields require trustedLocal true");
     }
     if (role === "reviewer") {
-      let config: ReviewRole;
-      try { config = enforceReviewerPolicy(parseRoleConfig(JSON.parse(readFileSync(join(directory, "roles.json"), "utf8"))).roles.reviewer); }
+      let config: ReviewRole | CodexRoleConfig;
+      try { config = parseWorkerReviewerConfig(JSON.parse(readFileSync(join(directory, "roles.json"), "utf8"))); }
       catch { throw new ProtocolError("CONFIG_INVALID", "A valid private roles.json is required for reviewer jobs"); }
+      if (config.runtime === "codex") {
+        if (params.requireApproval === true) throw new ProtocolError("UNSUPPORTED_POLICY", "Codex read-only worker has no Gattini launch approval path");
+        const enqueued = store.enqueueCodexReview({ task, idempotencyKey, role: "reviewer", config });
+        if (!enqueued.deduplicated && enqueued.state === "queued") scheduleCodexReview(enqueued.jobId, task, config);
+        return enqueued;
+      }
+      config = enforceReviewerPolicy(config);
       const enqueued = store.enqueueReview({ task, idempotencyKey, role, config, requireApproval: params.requireApproval === true });
       if (!enqueued.deduplicated && enqueued.state === "queued") scheduleReview(enqueued.jobId, task, config);
       return enqueued;
@@ -155,7 +164,7 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
       let config: CodexRoleConfig;
       try { config = parseCodexRoleConfig(JSON.parse(readFileSync(join(directory, "codex-role.json"), "utf8"))); }
       catch { throw new ProtocolError("CONFIG_INVALID", "A valid private codex-role.json is required for Codex review jobs"); }
-      const enqueued = store.enqueueCodexReview({ task, idempotencyKey, config });
+      const enqueued = store.enqueueCodexReview({ task, idempotencyKey, role: "codex-reviewer", config });
       if (!enqueued.deduplicated && enqueued.state === "queued") scheduleCodexReview(enqueued.jobId, task, config);
       return enqueued;
     }
@@ -182,13 +191,13 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
   if (request.method === "cancel") {
     const cancellation = store.requestCancel(jobId);
     if (cancellation.state === "cancelling" && cancellation.runtimeSessionId && cancellation.config) {
-      if ((cancellation.config as { runtime?: string }).runtime === "codex") {
-        scheduleCodexCancellation(jobId, cancellation.runtimeSessionId);
-        return { jobId, state: cancellation.state };
-      }
       const codePath = store.codeWorktreePath(jobId);
-      if (codePath) scheduleCodeCancellation(jobId, parseCodeRoleConfig({ ...(cancellation.config as object), runtime: "opencode" }), codePath, cancellation.runtimeSessionId);
-      else {
+      if (codePath) {
+        const savedRuntime = (cancellation.config as { runtime?: string }).runtime;
+        scheduleCodeCancellation(jobId, parseWorkerCodeRoleConfig({ ...(cancellation.config as object), runtime: savedRuntime === "codex-code" ? "codex" : "opencode" }), codePath, cancellation.runtimeSessionId);
+      } else if ((cancellation.config as { runtime?: string }).runtime === "codex") {
+        scheduleCodexCancellation(jobId, cancellation.runtimeSessionId);
+      } else {
         const config = parseRoleConfig({ schemaVersion: 1, roles: { reviewer: cancellation.config } }).roles.reviewer;
         scheduleCancellation(jobId, config, cancellation.runtimeSessionId);
       }
@@ -251,7 +260,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
   const activeReviews = new Set<Promise<void>>();
   const cancellations = new Set<string>();
   const localClients = new Map<string, AbortController>();
-  const codexHandles = new Map<string, CodexReviewHandle>();
+  const codexHandles = new Map<string, CodexReviewHandle | CodexProposalHandle>();
   const scheduler = new WorkerScheduler(jobId => ["interrupted", "cancelling"].includes(store.status(jobId).state),
     () => { /* Each scheduled path records its own failure state. */ }, store.uncertainCapacity());
   const scheduleCancellation: ScheduleCancellation = (jobId, config, sessionId) => {
@@ -373,13 +382,18 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
   };
   const scheduleCodeCancellation: ScheduleCodeCancellation = (jobId, config, worktreePath, sessionId) => {
     if (cancellations.has(jobId)) return;
-    cancellations.add(jobId);
     if (store.codeApplying(jobId)) {
+      cancellations.add(jobId);
       localClients.get(jobId)?.abort();
       store.cancelUncertain(jobId);
       cancellations.delete(jobId);
       return;
     }
+    if (config.runtime === "codex") {
+      scheduleCodexCancellation(jobId, sessionId);
+      return;
+    }
+    cancellations.add(jobId);
     const work = interruptCode(config, worktreePath, sessionId)
       .then(confirmed => { if (confirmed) { store.confirmCancelled(jobId, sessionId); scheduler.releaseHeld(jobId); } else store.cancelUncertain(jobId); })
       .catch(() => store.cancelUncertain(jobId))
@@ -391,9 +405,24 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
     scheduler.submit("write", jobId, async () => {
       let attemptId: string | undefined;
       const work = (async () => {
-        await preflightProposal(config, worktreePath);
+        if (config.runtime === "opencode") await preflightProposal(config, worktreePath);
         const before = await snapshotFingerprint(worktreePath, input.baseSha);
         attemptId = store.claimReview(jobId);
+        if (config.runtime === "codex") {
+          const handle = startCodexProposal({ ...config, cwd: worktreePath, task: input.task }, {
+            timeoutMs: store.runtimeTimeoutMs(jobId),
+            onIdentity: identity => {
+              store.recordCodexIdentity(jobId, attemptId!, identity);
+              if (store.cancellationNeeded(jobId)) scheduleCodexCancellation(jobId, identity.threadId);
+            },
+          });
+          codexHandles.set(jobId, handle);
+          const result = await handle.result;
+          if (before !== await snapshotFingerprint(worktreePath, input.baseSha)) throw new Error("Read-only Codex proposal changed the worktree");
+          const patch = validatePatch(result.proposal, worktreePath, input.baseSha);
+          store.completeProposal(jobId, attemptId, result.identity.threadId, result.proposal, before, patch, result.usage);
+          return;
+        }
         const localClient = new AbortController();
         localClients.set(jobId, localClient);
         const launched = await runProposal(config, worktreePath, input.task, event => {
@@ -408,7 +437,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
       })().catch(() => {
         if (attemptId) store.failReview(jobId, attemptId);
         else store.failCodePreflight(jobId);
-      }).finally(() => localClients.delete(jobId));
+      }).finally(() => { localClients.delete(jobId); codexHandles.delete(jobId); });
       activeReviews.add(work);
       try { await work; } finally { activeReviews.delete(work); }
     });
@@ -428,7 +457,9 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
           artifactDirectory: join(directory, "artifacts", jobId), signal: localClient.signal });
         if (localClient.signal.aborted) throw new Error("Verification was cancelled");
         store.completeCode(jobId, attemptId, sessionId, `Validated patch applied to ${applied.path}`,
-          { runtimeVersion: "2.0.18", agent: config.agent, model: config.model }, snapshot);
+          config.runtime === "opencode"
+            ? { runtimeVersion: "2.0.18", agent: config.agent, model: config.model }
+            : { runtimeVersion: "0.157.1", agent: "codex", model: config.model }, snapshot);
       })().catch(() => {
         if (attemptId) store.failCodeVerification(jobId, attemptId, "Patch apply or verification did not finish with retained evidence.");
         else store.failCodePreflight(jobId);
@@ -463,7 +494,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
       scheduleFollowup(queued.jobId, queued.attemptId, queued.task, config, queued.sessionId);
     } catch { store.failQueuedFollowup(queued.jobId, queued.attemptId); }
   }
-  for (const queued of store.pendingCodes()) scheduleCode(queued.jobId, queued.input, { ...queued.config, runtime: "opencode" }, queued.worktreePath);
+  for (const queued of store.pendingCodes()) scheduleCode(queued.jobId, queued.input, queued.config, queued.worktreePath);
   for (const queued of store.pendingApplies()) scheduleApply(queued.jobId, queued.input, queued.config, queued.worktreePath, queued.proposal, queued.sessionId);
   for (const candidate of store.reconciliationCandidates()) {
     try {

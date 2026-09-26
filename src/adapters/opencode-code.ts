@@ -1,6 +1,6 @@
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { CodeRoleConfig } from "../core/coding.js";
+import type { OpenCodeCodeRoleConfig } from "../core/coding.js";
 import { canonicalWorktree, matchesCodePermissions, CodePolicyError, CODE_PATH_PERMISSION_SYNTAX_VERIFIED } from "../core/code-policy.js";
 
 const execFileAsync = promisify(execFile);
@@ -48,7 +48,7 @@ function sessionId(value: string): void {
 }
 
 /** Read-only runtime checks. Every mismatch refuses before a coding process is spawned. */
-export async function preflightCode(role: CodeRoleConfig, worktreePath: string): Promise<void> {
+export async function preflightCode(role: OpenCodeCodeRoleConfig, worktreePath: string): Promise<void> {
   const directory = canonicalWorktree(worktreePath);
   modelParts(role.model);
   if (!CODE_PATH_PERMISSION_SYNTAX_VERIFIED) {
@@ -74,7 +74,7 @@ export async function preflightCode(role: CodeRoleConfig, worktreePath: string):
 }
 
 /** Only this policy may launch a Task 9 proposal. The legacy edit path stays disabled. */
-export async function preflightProposal(role: CodeRoleConfig, worktreePath: string): Promise<void> {
+export async function preflightProposal(role: OpenCodeCodeRoleConfig, worktreePath: string): Promise<void> {
   const directory = canonicalWorktree(worktreePath);
   modelParts(role.model);
   if (await command(["--version"], directory) !== PROPOSAL_VERSION) throw new CodePolicyError("Read-only proposal requires tested OpenCode V2.0.18");
@@ -95,7 +95,7 @@ export async function preflightProposal(role: CodeRoleConfig, worktreePath: stri
 
 /** Launch only after policy preflight and require a stable session ID in NDJSON output. */
 export async function runCode(
-  role: CodeRoleConfig,
+  role: OpenCodeCodeRoleConfig,
   worktreePath: string,
   task: string,
   onEvent: (event: CodeCliEvent) => void,
@@ -166,7 +166,7 @@ export async function runCode(
   });
 }
 
-export async function runProposal(role: CodeRoleConfig, worktreePath: string, task: string,
+export async function runProposal(role: OpenCodeCodeRoleConfig, worktreePath: string, task: string,
   onEvent: (event: CodeCliEvent) => void, signal?: AbortSignal, timeoutMs = 300_000): Promise<{ sessionId: string; proposal: string }> {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw new RangeError("Proposal timeout must be 1..300000 ms");
   await preflightProposal(role, worktreePath);
@@ -215,7 +215,7 @@ export interface CodeSession {
   directory: string;
 }
 
-export async function getCodeSession(role: CodeRoleConfig, worktreePath: string, id: string): Promise<CodeSession> {
+export async function getCodeSession(role: OpenCodeCodeRoleConfig, worktreePath: string, id: string): Promise<CodeSession> {
   sessionId(id);
   const directory = canonicalWorktree(worktreePath);
   const serviceUrl = await command(["service", "status"], directory);
@@ -231,7 +231,7 @@ export async function getCodeSession(role: CodeRoleConfig, worktreePath: string,
     outcome: response.data.outcome, directory: response.data.location.directory };
 }
 
-export async function interruptCode(role: CodeRoleConfig, worktreePath: string, id: string): Promise<boolean> {
+export async function interruptCode(role: OpenCodeCodeRoleConfig, worktreePath: string, id: string): Promise<boolean> {
   sessionId(id);
   const directory = canonicalWorktree(worktreePath);
   const serviceUrl = await command(["service", "status"], directory);
