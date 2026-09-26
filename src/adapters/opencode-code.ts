@@ -37,6 +37,46 @@ async function command(args: string[], directory: string): Promise<string> {
   }
 }
 
+function privateServerUrl(role: OpenCodeCodeRoleConfig): string | undefined {
+  const configured = process.env.GATTINI_OPENCODE_PRIVATE_SERVER_URL;
+  if (configured === undefined) return undefined;
+  let requested: URL;
+  let expected: URL;
+  try { requested = new URL(configured); expected = new URL(role.serverUrl); }
+  catch { throw new CodePolicyError("Private OpenCode server URL is invalid"); }
+  const plainLoopback = (url: URL): boolean => url.protocol === "http:" &&
+    ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname.toLowerCase()) &&
+    !!url.port && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/";
+  if (!plainLoopback(requested) || !plainLoopback(expected) || requested.origin !== expected.origin) {
+    throw new CodePolicyError("Private OpenCode server URL must match the configured loopback role origin");
+  }
+  return requested.origin;
+}
+
+function apiArgs(role: OpenCodeCodeRoleConfig, operation: string, ...args: string[]): string[] {
+  const server = privateServerUrl(role);
+  return ["api", ...(server ? ["--server", server] : []), operation, ...args];
+}
+
+async function targetedCommand(args: string[], directory: string): Promise<string> {
+  try { return await command(args, directory); }
+  catch { throw new CodePolicyError("Private OpenCode service request failed or was not authenticated"); }
+}
+
+async function checkService(role: OpenCodeCodeRoleConfig, directory: string): Promise<string | undefined> {
+  const server = privateServerUrl(role);
+  if (!server) {
+    const serviceUrl = await command(["service", "status"], directory);
+    if (serviceUrl !== role.serverUrl.replace(/\/$/, "")) throw new CodePolicyError("Configured OpenCode service differs from active service");
+    return undefined;
+  }
+  const raw = await targetedCommand(apiArgs(role, "GET", "/api/info"), directory);
+  const info = JSON.parse(raw) as { data?: { version?: unknown }; version?: unknown };
+  const version = info.data?.version ?? info.version;
+  if (version !== "2.0.18" && version !== "opencode v2.0.18") throw new CodePolicyError("Private OpenCode service version is not V2.0.18");
+  return server;
+}
+
 function modelParts(model: string): { providerID: string; id: string } {
   const slash = model.indexOf("/");
   if (slash < 1 || slash === model.length - 1) throw new CodePolicyError("Code role model must use an exact provider/model identifier");
@@ -78,10 +118,21 @@ export async function preflightProposal(role: OpenCodeCodeRoleConfig, worktreePa
   const directory = canonicalWorktree(worktreePath);
   modelParts(role.model);
   if (await command(["--version"], directory) !== PROPOSAL_VERSION) throw new CodePolicyError("Read-only proposal requires tested OpenCode V2.0.18");
-  if (await command(["service", "status"], directory) !== role.serverUrl.replace(/\/$/, "")) throw new CodePolicyError("Configured OpenCode service differs from active service");
-  const active = JSON.parse(await command(["api", "session.active"], directory)) as { data?: unknown };
+  const server = await checkService(role, directory);
+  const request = server ? targetedCommand : command;
+  const active = JSON.parse(await request(apiArgs(role, "session.active"), directory)) as { data?: unknown };
   if (!active.data || typeof active.data !== "object") throw new CodePolicyError("OpenCode active-session response is invalid");
-  const agents = JSON.parse(await command(["debug", "agents"], directory)) as Array<{ id?: string; permissions?: unknown }>;
+  let agents: Array<{ id?: string; permissions?: unknown }> = [];
+  for (let attempt = 0; attempt < (server ? 5 : 1); attempt += 1) {
+    const agentResponse = JSON.parse(await request(server ?
+      apiArgs(role, "agent.list", "--param", `location[directory]=${directory}`) : ["debug", "agents"], directory)) as
+      { data?: unknown } | Array<unknown>;
+    const list = server ? (agentResponse as { data?: unknown }).data : agentResponse;
+    if (!Array.isArray(list)) throw new CodePolicyError("OpenCode service did not return an effective agent list");
+    agents = list as typeof agents;
+    if (agents.some(item => item.id === role.agent)) break;
+    if (attempt < 4 && server) await new Promise(resolve => setTimeout(resolve, 250));
+  }
   const expected = [
     { action: "*", resource: "*", effect: "deny" },
     { action: "read", resource: "*", effect: "allow" },
@@ -90,7 +141,7 @@ export async function preflightProposal(role: OpenCodeCodeRoleConfig, worktreePa
   ];
   const agent = agents.find(item => item.id === role.agent);
   if (!agent || !Array.isArray(agent.permissions) || JSON.stringify(agent.permissions.slice(-4)) !== JSON.stringify(expected)) throw new CodePolicyError("Proposal agent lacks the exact deny-all/read-only permission tail");
-  if (!(await command(["models"], directory)).split(/\r?\n/).includes(role.model)) throw new CodePolicyError("Proposal model is unavailable");
+  if (!(await request(["models", ...(server ? ["--server", server] : [])], directory)).split(/\r?\n/).includes(role.model)) throw new CodePolicyError("Proposal model is unavailable");
 }
 
 /** Launch only after policy preflight and require a stable session ID in NDJSON output. */
@@ -173,7 +224,8 @@ export async function runProposal(role: OpenCodeCodeRoleConfig, worktreePath: st
   const directory = canonicalWorktree(worktreePath);
   const instruction = `${task}\n\nReturn ONLY strict JSON with path, beforeSha256, and afterBase64. Do not edit files.`;
   return new Promise((resolve, reject) => {
-    const child = spawn("opencode", ["run", "--agent", role.agent, "--model", role.model, "--format", "json", instruction], {
+    const server = privateServerUrl(role);
+    const child = spawn("opencode", ["run", ...(server ? ["--server", server] : []), "--agent", role.agent, "--model", role.model, "--format", "json", instruction], {
       cwd: directory, env: { ...process.env, PWD: directory }, stdio: ["ignore", "pipe", "pipe"], signal,
     });
     let pending = "", stderr = "", id = "", proposal = "", bytes = 0, failure: Error | undefined;
@@ -202,7 +254,9 @@ export async function runProposal(role: OpenCodeCodeRoleConfig, worktreePath: st
     child.once("close", code => {
       clearTimeout(timer);
       if (failure) return reject(failure);
-      if (pending.trim() || code !== 0 || !id || !proposal) return reject(new Error(`Proposal did not finish with exact session and text: ${stderr.slice(-500)}`));
+      if (pending.trim() || code !== 0 || !id || !proposal) return reject(new Error(server ?
+        "Private OpenCode proposal did not finish with exact session and text" :
+        `Proposal did not finish with exact session and text: ${stderr.slice(-500)}`));
       resolve({ sessionId: id, proposal });
     });
   });
@@ -218,9 +272,8 @@ export interface CodeSession {
 export async function getCodeSession(role: OpenCodeCodeRoleConfig, worktreePath: string, id: string): Promise<CodeSession> {
   sessionId(id);
   const directory = canonicalWorktree(worktreePath);
-  const serviceUrl = await command(["service", "status"], directory);
-  if (serviceUrl !== role.serverUrl.replace(/\/$/, "")) throw new Error("Configured shared service changed before session lookup");
-  const raw = await command(["api", "session.get", "--param", `sessionID=${id}`], directory);
+  const server = await checkService(role, directory);
+  const raw = await (server ? targetedCommand : command)(apiArgs(role, "session.get", "--param", `sessionID=${id}`), directory);
   const response = JSON.parse(raw) as { data?: { id?: string; agent?: string; model?: { providerID?: string; id?: string }; outcome?: string; location?: { directory?: string } } };
   if (response.data?.id !== id || !response.data.agent || !response.data.model?.providerID || !response.data.model.id ||
       !response.data.outcome || !response.data.location?.directory) throw new Error("OpenCode session lookup returned incomplete or mismatched identity");
@@ -234,12 +287,12 @@ export async function getCodeSession(role: OpenCodeCodeRoleConfig, worktreePath:
 export async function interruptCode(role: OpenCodeCodeRoleConfig, worktreePath: string, id: string): Promise<boolean> {
   sessionId(id);
   const directory = canonicalWorktree(worktreePath);
-  const serviceUrl = await command(["service", "status"], directory);
-  if (serviceUrl !== role.serverUrl.replace(/\/$/, "")) throw new Error("Configured shared service changed before cancellation");
-  const acknowledgement = JSON.parse(await command(["api", "session.interrupt", "--param", `sessionID=${id}`, "--param", "resume=false"], directory)) as { interrupted?: unknown };
+  const server = await checkService(role, directory);
+  const request = server ? targetedCommand : command;
+  const acknowledgement = JSON.parse(await request(apiArgs(role, "session.interrupt", "--param", `sessionID=${id}`, "--param", "resume=false"), directory)) as { interrupted?: unknown };
   if (acknowledgement.interrupted !== true) return false;
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const active = JSON.parse(await command(["api", "session.active"], directory)) as { data?: Record<string, unknown> };
+    const active = JSON.parse(await request(apiArgs(role, "session.active"), directory)) as { data?: Record<string, unknown> };
     if (!active.data || typeof active.data !== "object") throw new Error("OpenCode active-session response is malformed");
     if (!(id in active.data)) {
       try {

@@ -343,7 +343,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
           throw new Error("Coding worktree changed during independent review");
         }
         store.completeReview(jobId, attemptId, launched.sessionId, launched.summary, {
-          runtimeVersion: "2.0.16", agent: session.agent, model: expectedModel,
+          runtimeVersion: process.env.GATTINI_OPENCODE_PRIVATE_SERVER_URL ? "2.0.18" : "2.0.16", agent: session.agent, model: expectedModel,
         });
       })().catch(() => { store.failReview(jobId, attemptId); }).finally(() => localClients.delete(jobId));
       activeReviews.add(work);
@@ -370,7 +370,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
           throw new Error("Follow-up resolved a different session identity or outcome");
         }
         store.completeReview(jobId, attemptId, sessionId, launched.summary, {
-          runtimeVersion: "2.0.16", agent: session.agent, model: expectedModel,
+          runtimeVersion: process.env.GATTINI_OPENCODE_PRIVATE_SERVER_URL ? "2.0.18" : "2.0.16", agent: session.agent, model: expectedModel,
         });
       })().catch(() => {
         if (claimed) store.failReview(jobId, attemptId);

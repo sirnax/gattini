@@ -75,7 +75,12 @@ test("passes a strict raw proposal, exact identity, and usage from a read-only t
   assert.deepEqual(thread, { model: input.model, modelProvider: input.modelProvider, cwd: root, sandbox: "read-only", approvalPolicy: "on-request", approvalsReviewer: "user" });
   const turn = server.sent.find((m) => m.method === "turn/start")?.params as { input: Array<{ text: string }> };
   assert.equal(turn.input[0]?.text, codexProposalPrompt(input.task));
-  assert.match(turn.input[0]?.text ?? "", /Do not edit files, execute commands, request approval, or delegate/);
+  assert.match(turn.input[0]?.text ?? "", /Use available read-only tools to inspect the worktree before answering/);
+  assert.match(turn.input[0]?.text ?? "", /Read-only inspection commands are allowed/);
+  assert.match(turn.input[0]?.text ?? "", /Verify its current bytes with a tool and compute their SHA-256/);
+  assert.match(turn.input[0]?.text ?? "", /If read-only access or any required computation is unavailable/);
+  assert.match(turn.input[0]?.text ?? "", /do not return a proposal-shaped JSON object/);
+  assert.match(turn.input[0]?.text ?? "", /Do not edit files, run commands that change state or access the network, request approval, or delegate/);
 });
 
 test("rejects denied approval, noncompleted turn, and malformed JSON", async () => {
@@ -85,9 +90,23 @@ test("rejects denied approval, noncompleted turn, and malformed JSON", async () 
     setImmediate(() => completed(denied, proposal));
   }))).result, code("APPROVAL_REQUESTED"));
   assert.deepEqual(denied.sent.find((m) => m.id === "approval-1")?.result, { decision: "decline" });
+  const commandApproval = new MockServer();
+  await assert.rejects(startCodexProposal(input, opts(commandApproval, () => queueMicrotask(() => {
+    commandApproval.emitMessage({ id: "approval-2", method: "item/commandExecution/requestApproval", params: {} });
+    setImmediate(() => completed(commandApproval, proposal));
+  }))).result, code("APPROVAL_REQUESTED"));
+  assert.deepEqual(commandApproval.sent.find((m) => m.id === "approval-2")?.result, { decision: "decline" });
   const interrupted = new MockServer();
   await assert.rejects(startCodexProposal(input, opts(interrupted, () => queueMicrotask(() => completed(interrupted, proposal, "interrupted")))).result, code("NONCOMPLETED_TURN"));
-  for (const bad of ["", "```json\n" + proposal + "\n```", "{bad}", JSON.stringify({ ...JSON.parse(proposal) as object, extra: true }), JSON.stringify({ path: "x", beforeSha256: "bad", afterBase64: "x" })]) {
+  for (const bad of [
+    "",
+    "Cannot prepare a verified proposal: read-only tools unavailable.",
+    "```json\n" + proposal + "\n```",
+    "{bad}",
+    JSON.stringify({ ...JSON.parse(proposal) as object, extra: true }),
+    JSON.stringify({ path: "x", beforeSha256: "bad", afterBase64: "x" }),
+    JSON.stringify({ path: "math.mjs", beforeSha256: "", afterBase64: "" }),
+  ]) {
     const server = new MockServer();
     await assert.rejects(startCodexProposal(input, opts(server, () => queueMicrotask(() => completed(server, bad)))).result, code("INVALID_PROPOSAL"));
   }
