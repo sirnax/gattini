@@ -8,7 +8,9 @@ import { runProposal, type CodeCliEvent } from "../src/adapters/opencode-code.js
 import type { CodeRoleConfig } from "../src/core/coding.js";
 
 const SESSION_ID = "ses_timeout123";
-const TIMEOUT_MS = 2_000;
+// The full suite launches many child processes concurrently; leave startup
+// headroom so this checks a streaming timeout, not a delayed process launch.
+const TIMEOUT_MS = 5_000;
 
 function fakeOpenCode(): { directory: string; terminationMarker: string; restore(): void } {
   const directory = mkdtempSync(join(tmpdir(), "gattini-runtime-timeout-"));

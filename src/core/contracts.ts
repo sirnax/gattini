@@ -213,7 +213,7 @@ export function parseRuntimeResult(value: unknown): RuntimeResult {
   if (value.usage !== undefined) {
     if (!isRecord(value.usage)) throw new ContractError("usage must be an object");
     exactKeys(value.usage, ["runtime", "sessionId", "costUsd", "inputTokens", "outputTokens"]);
-    if (value.usage.runtime !== "opencode") throw new ContractError("usage.runtime is unsupported");
+    if (value.usage.runtime !== "opencode" && value.usage.runtime !== "codex") throw new ContractError("usage.runtime is unsupported");
     nonEmptyString(value.usage.sessionId, "usage.sessionId", 128);
     for (const key of ["costUsd", "inputTokens", "outputTokens"] as const) {
       const measure = value.usage[key];

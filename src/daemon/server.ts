@@ -7,6 +7,7 @@ import { WorkerScheduler } from "./scheduler.js";
 import { isTransientPreflightFailure, MAX_PREFLIGHT_ATTEMPTS } from "./retry.js";
 import { MAX_MESSAGE_BYTES, PROTOCOL_VERSION, ProtocolError, parseRequest, stringParam, type Request, type Response } from "../core/protocol.js";
 import { parseRoleConfig } from "../core/role-config.js";
+import { parseCodexRoleConfig, type CodexRoleConfig } from "../core/codex-role-config.js";
 import { enforceReviewerPolicy } from "../core/policy.js";
 import { getReviewSession, interruptReview, isReviewSessionActive, preflightReview, runReview, runReviewFollowup, type ReviewRole } from "../adapters/opencode-cli.js";
 import { parseCodeRoleConfig } from "../core/code-policy.js";
@@ -17,6 +18,7 @@ import { snapshotFingerprint, verifySnapshot } from "../verification/snapshot.js
 import { applyValidatedPatch, validatePatch } from "../verification/validated-patch.js";
 import { buildPinnedReviewPrompt, PinnedReviewError } from "../verification/pinned-review.js";
 import { previewOwnedCleanup } from "../environments/cleanup-preview.js";
+import { preflightCodexReview, startCodexReview, type CodexReviewHandle } from "../adapters/codex-app-server.js";
 
 export function stateDirectory(): string {
   const override = process.env.GATTINI_STATE_DIR;
@@ -64,10 +66,13 @@ type ScheduleCancellation = (jobId: string, config: ReviewRole, sessionId: strin
 type ScheduleCode = (jobId: string, input: CodeJobInput, config: CodeRoleConfig, worktreePath: string) => void;
 type ScheduleCodeCancellation = (jobId: string, config: CodeRoleConfig, worktreePath: string, sessionId: string) => void;
 type ScheduleApply = (jobId: string, input: CodeJobInput, config: CodeRoleConfig, worktreePath: string, proposal: string, sessionId: string) => void;
+type ScheduleCodexReview = (jobId: string, task: string, config: CodexRoleConfig) => void;
+type ScheduleCodexCancellation = (jobId: string, threadId: string) => void;
 
 async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Request, directory: string,
   scheduleReview: ScheduleReview, scheduleFollowup: ScheduleFollowup, scheduleCancellation: ScheduleCancellation, scheduleCode: ScheduleCode,
-  scheduleCodeCancellation: ScheduleCodeCancellation, scheduleApply: ScheduleApply): Promise<unknown> {
+  scheduleCodeCancellation: ScheduleCodeCancellation, scheduleApply: ScheduleApply,
+  scheduleCodexReview: ScheduleCodexReview, scheduleCodexCancellation: ScheduleCodexCancellation): Promise<unknown> {
   const params = request.params;
   if (request.method === "cleanup.preview") {
     exactParams(params, ["jobId"]);
@@ -145,6 +150,15 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
       if (!enqueued.deduplicated && enqueued.state === "queued") scheduleReview(enqueued.jobId, task, config);
       return enqueued;
     }
+    if (role === "codex-reviewer") {
+      if (params.requireApproval === true) throw new ProtocolError("UNSUPPORTED_POLICY", "Codex read-only worker has no Gattini launch approval path");
+      let config: CodexRoleConfig;
+      try { config = parseCodexRoleConfig(JSON.parse(readFileSync(join(directory, "codex-role.json"), "utf8"))); }
+      catch { throw new ProtocolError("CONFIG_INVALID", "A valid private codex-role.json is required for Codex review jobs"); }
+      const enqueued = store.enqueueCodexReview({ task, idempotencyKey, config });
+      if (!enqueued.deduplicated && enqueued.state === "queued") scheduleCodexReview(enqueued.jobId, task, config);
+      return enqueued;
+    }
     if (role !== "code") throw new ProtocolError("INVALID_REQUEST", "Only code (fake) and reviewer (OpenCode) roles are supported");
     if (params.requireApproval === true) throw new ProtocolError("UNSUPPORTED_POLICY", "The fake code role has no approval-gated runtime action");
     return store.start({ task, idempotencyKey, role });
@@ -168,6 +182,10 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
   if (request.method === "cancel") {
     const cancellation = store.requestCancel(jobId);
     if (cancellation.state === "cancelling" && cancellation.runtimeSessionId && cancellation.config) {
+      if ((cancellation.config as { runtime?: string }).runtime === "codex") {
+        scheduleCodexCancellation(jobId, cancellation.runtimeSessionId);
+        return { jobId, state: cancellation.state };
+      }
       const codePath = store.codeWorktreePath(jobId);
       if (codePath) scheduleCodeCancellation(jobId, parseCodeRoleConfig({ ...(cancellation.config as object), runtime: "opencode" }), codePath, cancellation.runtimeSessionId);
       else {
@@ -181,7 +199,8 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
 }
 
 function handleConnection(socket: Socket, store: JobStore, worktrees: WorktreeManager, directory: string, scheduleReview: ScheduleReview,
-  scheduleFollowup: ScheduleFollowup, scheduleCancellation: ScheduleCancellation, scheduleCode: ScheduleCode, scheduleCodeCancellation: ScheduleCodeCancellation, scheduleApply: ScheduleApply): void {
+  scheduleFollowup: ScheduleFollowup, scheduleCancellation: ScheduleCancellation, scheduleCode: ScheduleCode, scheduleCodeCancellation: ScheduleCodeCancellation, scheduleApply: ScheduleApply,
+  scheduleCodexReview: ScheduleCodexReview, scheduleCodexCancellation: ScheduleCodexCancellation): void {
   socket.setTimeout(10_000, () => socket.destroy());
   let buffer = Buffer.alloc(0);
   let answered = false;
@@ -203,7 +222,7 @@ function handleConnection(socket: Socket, store: JobStore, worktrees: WorktreeMa
     try {
       const request = parseRequest(JSON.parse(buffer.subarray(0, end).toString("utf8")));
       requestId = request.requestId;
-      void dispatch(store, worktrees, request, directory, scheduleReview, scheduleFollowup, scheduleCancellation, scheduleCode, scheduleCodeCancellation, scheduleApply)
+      void dispatch(store, worktrees, request, directory, scheduleReview, scheduleFollowup, scheduleCancellation, scheduleCode, scheduleCodeCancellation, scheduleApply, scheduleCodexReview, scheduleCodexCancellation)
         .then(result => reply({ protocolVersion: PROTOCOL_VERSION, requestId, ok: true, result }))
         .catch(error => reply({ protocolVersion: PROTOCOL_VERSION, requestId, ok: false,
           error: { code: error instanceof ProtocolError ? error.code : "INTERNAL", message: error instanceof ProtocolError ? error.message : "Internal daemon error" } }));
@@ -232,6 +251,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
   const activeReviews = new Set<Promise<void>>();
   const cancellations = new Set<string>();
   const localClients = new Map<string, AbortController>();
+  const codexHandles = new Map<string, CodexReviewHandle>();
   const scheduler = new WorkerScheduler(jobId => ["interrupted", "cancelling"].includes(store.status(jobId).state),
     () => { /* Each scheduled path records its own failure state. */ }, store.uncertainCapacity());
   const scheduleCancellation: ScheduleCancellation = (jobId, config, sessionId) => {
@@ -243,6 +263,44 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
       .finally(() => localClients.get(jobId)?.abort());
     activeReviews.add(work);
     void work.finally(() => { cancellations.delete(jobId); activeReviews.delete(work); });
+  };
+  const scheduleCodexCancellation: ScheduleCodexCancellation = (jobId, threadId) => {
+    if (cancellations.has(jobId)) return;
+    const handle = codexHandles.get(jobId);
+    if (!handle) { store.cancelUncertain(jobId); return; }
+    cancellations.add(jobId);
+    const work = handle.interrupt()
+      .then(outcome => {
+        if (outcome.confirmed && outcome.identity?.threadId === threadId) {
+          store.confirmCancelled(jobId, threadId);
+          scheduler.releaseHeld(jobId);
+        } else store.cancelUncertain(jobId);
+      })
+      .catch(() => store.cancelUncertain(jobId));
+    activeReviews.add(work);
+    void work.finally(() => { cancellations.delete(jobId); activeReviews.delete(work); });
+  };
+  const scheduleCodexReview: ScheduleCodexReview = (jobId, task, config) => {
+    scheduler.submit("read", jobId, async () => {
+      let attemptId: string | undefined;
+      const work = (async () => {
+        preflightCodexReview({ model: config.model, modelProvider: config.modelProvider, cwd: config.directory,
+          task, executable: config.executable });
+        attemptId = store.claimReview(jobId);
+        const handle = startCodexReview({ model: config.model, modelProvider: config.modelProvider, cwd: config.directory,
+          task, executable: config.executable }, { timeoutMs: store.runtimeTimeoutMs(jobId), maxTextBytes: 4096, onIdentity: identity => {
+            store.recordCodexIdentity(jobId, attemptId!, identity);
+            if (store.cancellationNeeded(jobId)) scheduleCodexCancellation(jobId, identity.threadId);
+          } });
+        codexHandles.set(jobId, handle);
+        const result = await handle.result;
+        if (result.status !== "completed") throw new Error("Codex turn did not complete");
+        store.completeCodexReview(jobId, attemptId, result.identity, result.text,
+          result.usage ?? { inputTokens: null, outputTokens: null });
+      })().catch(() => store.failCodexReview(jobId, attemptId)).finally(() => codexHandles.delete(jobId));
+      activeReviews.add(work);
+      try { await work; } finally { activeReviews.delete(work); }
+    });
   };
   const scheduleReview: ScheduleReview = (jobId, task, config) => {
     scheduler.submit("read", jobId, async () => {
@@ -379,7 +437,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
       try { await work; } finally { activeReviews.delete(work); }
     });
   };
-  const server: Server = createServer(socket => handleConnection(socket, store, worktrees, directory, scheduleReview, scheduleFollowup, scheduleCancellation, scheduleCode, scheduleCodeCancellation, scheduleApply));
+  const server: Server = createServer(socket => handleConnection(socket, store, worktrees, directory, scheduleReview, scheduleFollowup, scheduleCancellation, scheduleCode, scheduleCodeCancellation, scheduleApply, scheduleCodexReview, scheduleCodexCancellation));
   try {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -398,6 +456,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
       scheduleReview(queued.jobId, queued.task, config);
     } catch { store.failReview(queued.jobId); }
   }
+  for (const queued of store.pendingCodexReviews()) scheduleCodexReview(queued.jobId, queued.task, queued.config);
   for (const queued of store.pendingFollowups()) {
     try {
       const config = enforceReviewerPolicy(parseRoleConfig({ schemaVersion: 1, roles: { reviewer: queued.config } }).roles.reviewer);

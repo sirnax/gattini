@@ -8,6 +8,7 @@ import { actionDigest, enforceReviewerPolicy, reviewLaunchAction } from "../core
 import { parseVerificationCommands, type CodeJobInput, type CodeRoleConfig, type SnapshotEvidence } from "../core/coding.js";
 import { WorktreeManager } from "../environments/worktree.js";
 import { OpenCodeUsageAccumulator } from "../core/usage.js";
+import { parseCodexRoleConfig, type CodexRoleConfig } from "../core/codex-role-config.js";
 
 type State = "queued" | "awaiting-approval" | "running" | "cancelling" | "cancelled" | "completed" | "failed" | "interrupted";
 type JobRow = { id: string; idempotency_key: string; input_digest: string; state: State; created_at: string; updated_at: string; result_json: string | null; runtime_session_id: string | null; resolved_json: string | null; scope_key: string | null; config_json: string; job_json: string };
@@ -270,6 +271,78 @@ export class JobStore {
     }
     const approval = this.db.prepare("SELECT id FROM approvals WHERE job_id = ?").get(id) as { id: string } | undefined;
     return { jobId: id, state: requireApproval ? "awaiting-approval" : "queued", deduplicated: false, ...(approval ? { approvalId: approval.id } : {}) };
+  }
+
+  enqueueCodexReview(input: { task: string; idempotencyKey: string; config: CodexRoleConfig }): { jobId: string; state: State; deduplicated: boolean } {
+    const config = parseCodexRoleConfig(input.config);
+    const digest = createHash("sha256").update(JSON.stringify({ task: input.task, role: "codex-reviewer", config })).digest("hex");
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const job = parseJob({ schemaVersion: 1, id, parentWorkflowId: null, role: "codex-reviewer", task: input.task,
+      acceptanceCriteria: [], capabilities: ["headless", "explicit-session", "event-stream", "cancellation", "permission-enforcement"],
+      inputReferences: [], repository: null, allowedScope: [], verificationCommands: [],
+      limits: { timeoutSeconds: 60, maxEvents: 1000 }, approvalPolicy: "none" });
+    const existing = this.transaction(() => {
+      const prior = this.db.prepare("SELECT * FROM jobs WHERE idempotency_key = ?").get(input.idempotencyKey) as JobRow | undefined;
+      if (prior) return prior;
+      let scope: string;
+      try { scope = realpathSync(config.directory); }
+      catch { throw new ProtocolError("INVALID_REQUEST", "Codex review directory is unavailable"); }
+      const conflicts = this.db.prepare("SELECT scope_key FROM jobs WHERE scope_key IS NOT NULL AND state IN ('queued','awaiting-approval','running','cancelling','interrupted')").all() as Array<{ scope_key: string }>;
+      if (conflicts.some(row => {
+        try { return realpathSync(row.scope_key) === scope; }
+        catch { return row.scope_key === scope; }
+      })) throw new ProtocolError("SCOPE_BLOCKED", "A job in this directory is active or needs reconciliation");
+      this.db.prepare("INSERT INTO jobs (id,idempotency_key,input_digest,state,job_json,config_json,created_at,updated_at,scope_key) VALUES (?,?,?,?,?,?,?,?,?)")
+        .run(id, input.idempotencyKey, digest, "queued", JSON.stringify(job), JSON.stringify(config), now, now, scope);
+      return undefined;
+    });
+    if (existing) {
+      if (existing.input_digest !== digest) throw new ProtocolError("IDEMPOTENCY_CONFLICT", "Idempotency key belongs to a different request");
+      return { jobId: existing.id, state: existing.state, deduplicated: true };
+    }
+    return { jobId: id, state: "queued", deduplicated: false };
+  }
+
+  pendingCodexReviews(): Array<{ jobId: string; task: string; config: CodexRoleConfig }> {
+    const rows = this.db.prepare("SELECT id,job_json,config_json FROM jobs WHERE state='queued' AND json_extract(config_json,'$.runtime')='codex' AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.job_id=jobs.id)").all() as Array<{ id: string; job_json: string; config_json: string }>;
+    return rows.map(row => ({ jobId: row.id, task: parseJob(JSON.parse(row.job_json)).task,
+      config: parseCodexRoleConfig(JSON.parse(row.config_json)) }));
+  }
+
+  recordCodexIdentity(jobId: string, attemptId: string, identity: { threadId: string; sessionId: string; turnId: string; cliVersion: string; model: string; modelProvider: string }): void {
+    this.transaction(() => {
+      this.assertAttempt(jobId, attemptId);
+      const row = this.rowById(jobId);
+      const config = parseCodexRoleConfig(JSON.parse(row.config_json));
+      if (!["running", "cancelling"].includes(row.state) || row.runtime_session_id || identity.model !== config.model || identity.modelProvider !== config.modelProvider ||
+          !identity.threadId || !identity.turnId || !identity.sessionId || identity.threadId.length > 128 || identity.turnId.length > 128 || identity.sessionId.length > 128) {
+        throw new Error("Codex runtime identity does not match the claimed job");
+      }
+      this.db.prepare("UPDATE jobs SET runtime_session_id=?, resolved_json=?, updated_at=? WHERE id=?")
+        .run(identity.threadId, JSON.stringify(identity), new Date().toISOString(), jobId);
+      this.db.prepare("UPDATE attempts SET runtime_session_id=?, phase=? WHERE id=?")
+        .run(identity.threadId, row.state === "cancelling" ? "cancelling" : "running", attemptId);
+    });
+  }
+
+  completeCodexReview(jobId: string, attemptId: string, identity: { threadId: string; sessionId: string; turnId: string; cliVersion: string; model: string; modelProvider: string },
+    summary: string, usage: { inputTokens: number | null; outputTokens: number | null }): void {
+    this.assertAttempt(jobId, attemptId);
+    const row = this.rowById(jobId);
+    if (row.state !== "running" || row.runtime_session_id !== identity.threadId || row.resolved_json !== JSON.stringify(identity)) {
+      throw new Error("Codex result identity or state differs from the claimed turn");
+    }
+    const result = parseRuntimeResult({ schemaVersion: 1, jobId, execution: "completed", acceptance: "unverified",
+      summary: summary || "Codex read-only turn completed without final text.", changedFiles: [], verification: [],
+      limitations: ["Codex read-only worker policy is not host containment; output has no independent acceptance checks."],
+      usage: { runtime: "codex", sessionId: identity.sessionId, costUsd: null, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } });
+    this.transaction(() => {
+      this.db.prepare("UPDATE jobs SET state='completed',result_json=?,updated_at=? WHERE id=?")
+        .run(JSON.stringify(result), new Date().toISOString(), jobId);
+      this.db.prepare("UPDATE attempts SET phase='completed' WHERE id=?").run(attemptId);
+      this.recordTurnResult(jobId, attemptId, result);
+    });
   }
 
   sourceSnapshotForReview(jobId: string): { attemptId: string; snapshot: SnapshotEvidence } {
@@ -780,10 +853,28 @@ export class JobStore {
       .run(JSON.stringify(result), new Date().toISOString(), jobId);
   }
 
+  failCodexReview(jobId: string, attemptId?: string): void {
+    if (attemptId) this.assertAttempt(jobId, attemptId);
+    const row = this.rowById(jobId);
+    if (!["queued", "running", "cancelling"].includes(row.state)) return;
+    const now = new Date().toISOString();
+    if (attemptId) {
+      this.transaction(() => {
+        this.db.prepare("UPDATE jobs SET state='interrupted',updated_at=? WHERE id=?").run(now, jobId);
+        this.db.prepare("UPDATE attempts SET phase='uncertain' WHERE id=?").run(attemptId);
+      });
+      return;
+    }
+    const result = parseRuntimeResult({ schemaVersion: 1, jobId, execution: "failed", acceptance: "unverified",
+      summary: "Codex worker preflight did not complete.", changedFiles: [], verification: [], limitations: ["No Codex runtime turn was claimed."] });
+    this.db.prepare("UPDATE jobs SET state='failed',result_json=?,updated_at=? WHERE id=? AND state='queued'")
+      .run(JSON.stringify(result), now, jobId);
+  }
+
   requestCancel(jobId: string): { jobId: string; state: State; runtimeSessionId: string | null; config: unknown | null } {
     return this.transaction(() => {
       const row = this.rowById(jobId);
-      if (!row.scope_key) throw new ProtocolError("UNSUPPORTED", "Cancellation is only available for OpenCode reviewer jobs");
+      if (!row.scope_key) throw new ProtocolError("UNSUPPORTED", "Cancellation is only available for scoped runtime jobs");
       if (["completed", "failed", "cancelled"].includes(row.state)) return { jobId, state: row.state, runtimeSessionId: row.runtime_session_id, config: null };
       const attempt = this.db.prepare("SELECT id,phase FROM attempts WHERE job_id = ? ORDER BY rowid DESC LIMIT 1").get(jobId) as { id: string; phase: string } | undefined;
       if (row.state === "queued" && attempt?.phase === "queued" && this.db.prepare("SELECT 1 FROM followups WHERE attempt_id = ?").get(attempt.id)) {
