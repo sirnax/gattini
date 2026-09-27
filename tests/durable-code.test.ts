@@ -10,11 +10,11 @@ import { startDaemon } from "../src/daemon/server.js";
 
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
-const wire = (method: string, params: unknown) => ({ protocolVersion: 1, requestId: `req-${Date.now()}`, method, params });
-async function request(socketPath: string, method: string, params: unknown): Promise<Record<string, any>> {
+const wire = (method: string, params: unknown, protocolVersion: 1 | 2 = 1) => ({ protocolVersion, requestId: `req-${Date.now()}`, method, params });
+async function request(socketPath: string, method: string, params: unknown, protocolVersion: 1 | 2 = 1): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => {
     const socket = connect(socketPath); let data = "";
-    socket.on("connect", () => socket.write(`${JSON.stringify(wire(method, params))}\n`));
+    socket.on("connect", () => socket.write(`${JSON.stringify(wire(method, params, protocolVersion))}\n`));
     socket.on("data", chunk => { data += String(chunk); });
     socket.on("end", () => { try { const response = JSON.parse(data) as { ok: boolean; result: Record<string, any>; error?: unknown }; assert.equal(response.ok, true, JSON.stringify(response.error)); resolve(response.result); } catch (error) { reject(error); } });
     socket.on("error", reject);
@@ -80,6 +80,14 @@ esac
   assert.equal(sha(readFileSync(evidence.artifact.diffPath)), evidence.artifact.diffFileSha256);
   assert.equal(JSON.parse(readFileSync(evidence.artifact.path, "utf8")).entries.find((entry: { path: string }) => entry.path === "code.txt").content, Buffer.from("new\n").toString("base64"));
   assert.match(readFileSync(evidence.artifact.diffPath, "utf8"), /\+new/);
+  const diff = await request(daemon.socketPath, "evidence.read", { jobId: start.jobId, kind: "diff" }, 2);
+  assert.match(diff.text, /\+new/);
+  assert.equal(diff.sha256, sha(diff.text));
+  assert.equal(diff.truncated, false);
+  const snapshotView = await request(daemon.socketPath, "evidence.read", { jobId: start.jobId, kind: "snapshot" }, 2);
+  assert.equal(JSON.parse(snapshotView.text).snapshotSha, evidence.snapshotSha);
+  assert.equal(snapshotView.text.includes("afterBase64"), false);
+  await assert.rejects(request(daemon.socketPath, "evidence.read", { jobId: start.jobId, kind: "diff", path: "/etc/passwd" }, 2), /INVALID_REQUEST/);
   assert.equal(readFileSync(join(source, "code.txt"), "utf8"), "dirty\n");
   assert.equal(readFileSync(join(source, "unrelated.txt"), "utf8"), "keep\n");
   assert.equal(existsSync(evidence.artifact.path), true);
@@ -88,5 +96,8 @@ esac
   assert.equal((await request(daemon.socketPath, "result", { jobId: start.jobId })).result.snapshot.snapshotSha, evidence.snapshotSha);
   writeFileSync(evidence.artifact.diffPath, "tampered");
   await assert.rejects(request(daemon.socketPath, "result", { jobId: start.jobId }), /EVIDENCE_INVALID/);
+  await assert.rejects(request(daemon.socketPath, "evidence.read", { jobId: start.jobId, kind: "diff" }, 2), /EVIDENCE_INVALID/);
+  writeFileSync(evidence.artifact.diffPath, "x".repeat(64 * 1024 + 1));
+  await assert.rejects(request(daemon.socketPath, "evidence.read", { jobId: start.jobId, kind: "diff" }, 2), /EVIDENCE_TOO_LARGE/);
   await daemon.close();
 });

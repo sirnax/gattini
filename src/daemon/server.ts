@@ -85,7 +85,19 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
   const params = request.params;
   if (request.method === "hello") {
     exactParams(params, []);
-    return { version: RELEASE_VERSION, protocolVersion: PROTOCOL_VERSION, databaseSchemaVersion: DATABASE_SCHEMA_VERSION };
+    return { version: RELEASE_VERSION, protocolVersion: request.protocolVersion, databaseSchemaVersion: DATABASE_SCHEMA_VERSION };
+  }
+  if (request.method === "events.list") {
+    exactParams(params, ["jobId", "afterSequence", "limit"]);
+    return store.eventPage(stringParam(params, "jobId", 128), params.afterSequence as number, params.limit as number);
+  }
+  if (request.method === "evidence.read") {
+    exactParams(params, ["jobId", "attemptId", "kind"]);
+    const jobId = stringParam(params, "jobId", 128);
+    const attemptId = params.attemptId === undefined ? undefined : stringParam(params, "attemptId", 128);
+    const kind = stringParam(params, "kind", 16);
+    if (kind !== "diff" && kind !== "snapshot") throw new ProtocolError("INVALID_REQUEST", "Evidence kind must be diff or snapshot");
+    return store.evidenceRead(jobId, attemptId, kind);
   }
   if (request.method === "cleanup.preview") {
     exactParams(params, ["jobId"]);
@@ -259,14 +271,15 @@ function handleConnection(socket: Socket, store: JobStore, worktrees: WorktreeMa
     try {
       const request = parseRequest(JSON.parse(buffer.subarray(0, end).toString("utf8")));
       requestId = request.requestId;
+      const protocolVersion = request.protocolVersion;
       if (request.clientVersion !== undefined && request.clientVersion !== RELEASE_VERSION) {
-        reply({ protocolVersion: PROTOCOL_VERSION, requestId, ok: false,
+        reply({ protocolVersion, requestId, ok: false,
           error: { code: "VERSION_MISMATCH", message: `Client ${request.clientVersion} is incompatible with daemon ${RELEASE_VERSION}` } });
         return;
       }
       void dispatch(store, worktrees, request, directory, scheduleReview, scheduleFollowup, scheduleCancellation, scheduleCode, scheduleCodeCancellation, scheduleApply, scheduleCodexReview, scheduleCodexCancellation, scheduleClaudeReview, scheduleClaudeCancellation)
-        .then(result => reply({ protocolVersion: PROTOCOL_VERSION, requestId, ok: true, result }))
-        .catch(error => reply({ protocolVersion: PROTOCOL_VERSION, requestId, ok: false,
+        .then(result => reply({ protocolVersion, requestId, ok: true, result }))
+        .catch(error => reply({ protocolVersion, requestId, ok: false,
           error: { code: error instanceof ProtocolError ? error.code : "INTERNAL", message: error instanceof ProtocolError ? error.message : "Internal daemon error" } }));
     } catch (error) {
       const known = error instanceof ProtocolError ? error

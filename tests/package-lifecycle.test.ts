@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { RELEASE_VERSION } from "../src/core/release.js";
 
 const root = mkdtempSync(join(tmpdir(), "gattini-package-"));
 const output = join(root, "release one");
@@ -13,7 +14,7 @@ const secondOutput = join(root, "release two");
 const prefix = join(root, "install prefix");
 const state = join(root, "private state");
 const npmCache = join(root, "npm cache");
-const archive = join(output, "gattini-0.1.0.tgz");
+const archive = join(output, `gattini-${RELEASE_VERSION}.tgz`);
 const repository = process.cwd();
 let daemon: ChildProcess | undefined;
 
@@ -130,13 +131,13 @@ after(async () => {
 test("local release is reproducible and has a matching checksum manifest", () => {
   command(process.execPath, ["scripts/package-local.mjs", "--out-dir", secondOutput]);
   const hash = digest(archive);
-  assert.equal(digest(join(secondOutput, "gattini-0.1.0.tgz")), hash);
-  assert.equal(readFileSync(join(output, "gattini-0.1.0.tgz.sha256"), "utf8"), `${hash}  gattini-0.1.0.tgz\n`);
+  assert.equal(digest(join(secondOutput, `gattini-${RELEASE_VERSION}.tgz`)), hash);
+  assert.equal(readFileSync(join(output, `gattini-${RELEASE_VERSION}.tgz.sha256`), "utf8"), `${hash}  gattini-${RELEASE_VERSION}.tgz\n`);
   const release = JSON.parse(readFileSync(join(output, "release.json"), "utf8")) as Record<string, unknown>;
   assert.equal(release.name, "gattini");
-  assert.equal(release.version, "0.1.0");
+  assert.equal(release.version, RELEASE_VERSION);
   assert.equal(release.sha256, hash);
-  assert.equal(release.archive, "gattini-0.1.0.tgz");
+  assert.equal(release.archive, `gattini-${RELEASE_VERSION}.tgz`);
   assert.equal(release.platform, process.platform);
   assert.equal(release.arch, process.arch);
   assert.equal(release.nodeRange, ">=24");
@@ -151,7 +152,7 @@ test("local prefix upgrade and uninstall retain isolated jobs and configuration"
   install(archive);
 
   const manifest = JSON.parse(readFileSync(join(prefix, "lib", "node_modules", "gattini", "package.json"), "utf8")) as Record<string, unknown>;
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, RELEASE_VERSION);
   assert.equal((manifest.engines as Record<string, string>).node, ">=24");
   assert.deepEqual(manifest.os, ["darwin"]);
   assert.deepEqual(manifest.cpu, ["arm64"]);

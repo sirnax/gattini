@@ -256,12 +256,14 @@ Checkpoint 5 and Gate B were explicitly accepted by the owner on **27 September 
 
 Local preparation, 27 September 2026: GPT-6 Sol medium owned only `scripts/render-homebrew-formula.mjs`, `packaging/homebrew/README.md` and `tests/homebrew-formula.test.ts`. The renderer rechecked the exact Task 15 archive and generated a disposable draft `Gattini-local-draft.rb` under `/private/tmp/gattini-task15-final-node24` with SHA-256 `73e0f6b664dd064f46ce98a069fccee81e0fed188859b3fe626d0f2381736664`. `ruby -c` reported `Syntax OK`; focused typecheck/build/test passed **1/1**. The draft declares macOS arm64 and `node@24`, creates command wrappers, and defines a service only for separate opt-in registration. It uses a placeholder homepage and local file URL; no `brew audit`, `brew test`, Homebrew installation, external tap, provider call or publication occurred. Task 16 remains open pending owner/name decisions and required local formula lifecycle validation.
 
-### [ ] Task 17 — VS Code submit/status client
+### [x] Task 17 — VS Code submit/status client
 
 - Deliver: thin extension to submit a task and display durable job status/events.
 - Acceptance: extension contains no scheduler or runtime logic; reconnect resumes by event cursor; Workspace Trust prevents execution in untrusted workspaces.
 - Verification: extension-host tests, daemon disconnect/reconnect, multiple workspace folders and paths with spaces.
 - Dependencies: 15 and Checkpoint 6 approval; independent of Task 16 publication. Scope: medium. Files: extension manifest/client/views and tests.
+
+Task 17 local implementation and verification, 27 September 2026: release `0.2.0` introduced protocol v2 with exact `hello` release/protocol negotiation, bounded `events.list` pages (exclusive integer cursor, maximum 100), typed invalid/future/gap errors, and matching CLI `events` behavior. The thin extension saves job IDs and processed cursors, resumes after disconnection/restart, makes multi-root folder selection explicit, and blocks submission/actions in untrusted workspaces. Node 24.21.0 and Node 26.10.0 root offline gates each passed **202/202**; extension gates on each passed **8/8**. Disposable VS Code 1.115.0 extension-host activation/command smoke passed. A disposable manual extension host submitted fake job `c5251dc6-2ed3-4384-a52a-398733d79472`, displayed events 1–3 and completed result, then retrieved the same result after daemon restart. Paths with spaces, cursor replay, malformed/future cursors, disconnect/reconnect and multi-root behavior are covered by offline tests. No provider call or normal-account install occurred. See [`TASK17_18_LOCAL_EVIDENCE.md`](TASK17_18_LOCAL_EVIDENCE.md).
 
 ### [ ] Task 18 — VS Code results and approval actions
 
@@ -269,6 +271,8 @@ Local preparation, 27 September 2026: GPT-6 Sol medium owned only `scripts/rende
 - Acceptance: actions target exact job/approval IDs; untrusted output renders safely; secrets are not exposed through diagnostic export. Other editors are documented as CLI-compatible or individually tested, never assumed native-compatible.
 - Verification: malicious output rendering, stale approval, cancellation and a full manual task in VS Code; test one desired derivative editor if available.
 - Dependencies: 17. Scope: medium. Files: extension action/result components and tests, editor compatibility documentation.
+
+Task 18 local implementation, 27 September 2026: protocol v2 `evidence.read` returns digest-checked, size-bounded diff text or snapshot metadata without client-supplied artifact paths. The extension renders result/evidence as plain text, validates bounded response shapes, refreshes an exact pending approval and job state before approval/denial, and uses exact job IDs for cancellation. Offline tests cover malicious text, stale approval and cancellation. In a disposable VS Code host, exact approval `f4585804-ad4c-4510-8b4e-25348a7ecbb1` for reviewer job `7f932369-eb01-453f-a3b4-8b5a1d1d813b` was denied; the CLI confirmed the job failed and no reviewer attempt ran. A separate offline fake-code CLI job `1a0032f7-dbe5-4d4c-a9d3-edf41885647e` completed with passed snapshot verification; the editor attached it by exact ID and displayed its result, and the extension client read its verified diff and snapshot metadata after restart. **The visible VS Code evidence command was not completed in the manual host**, and no derivative editor was tested. Task 18 remains open for that manual check. No live provider, publication, startup service or direct-edit gate was used. See [`TASK17_18_LOCAL_EVIDENCE.md`](TASK17_18_LOCAL_EVIDENCE.md).
 
 ### Checkpoint 7 — release gate C
 

@@ -1,6 +1,6 @@
 # Task 17 protocol version boundary for Checkpoint 6
 
-Status: design boundary only, 27 September 2026. No v2 RPC or editor implementation exists. Checkpoint 6 approval is required before Task 17 implementation. The Task 15 `0.1.0` CLI and daemon speak protocol v1 and require exact release-version agreement through `hello`.
+Status: historical Checkpoint 6 design boundary, superseded by the implemented `0.2.0` protocol v2 on 27 September 2026. The shipped local contract and verification are recorded in [`TASK17_18_LOCAL_EVIDENCE.md`](TASK17_18_LOCAL_EVIDENCE.md) and [`../cli-contract.md`](../cli-contract.md). The sections below describe the pre-implementation v1 state and proposal, not the current repository state.
 
 ## Frozen v1 surface
 

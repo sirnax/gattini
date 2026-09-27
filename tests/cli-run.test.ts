@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { startDaemon } from "../src/daemon/server.js";
+import { RELEASE_VERSION } from "../src/core/release.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -40,10 +41,10 @@ async function mock(path: string, handler: (method: string, params: Record<strin
       if (!input.endsWith("\n")) return;
       const request = JSON.parse(input) as { protocolVersion: number; requestId: string; method: string; params: Record<string, unknown> };
       try {
-        const result = request.method === "hello" ? { version: "0.1.0", protocolVersion: 1, databaseSchemaVersion: 7 } : handler(request.method, request.params);
-        socket.end(JSON.stringify({ protocolVersion: 1, requestId: request.requestId, ok: true, result }) + "\n");
+        const result = request.method === "hello" ? { version: RELEASE_VERSION, protocolVersion: 2, databaseSchemaVersion: 7 } : handler(request.method, request.params);
+        socket.end(JSON.stringify({ protocolVersion: 2, requestId: request.requestId, ok: true, result }) + "\n");
       } catch (error) {
-        socket.end(JSON.stringify({ protocolVersion: 1, requestId: request.requestId, ok: false,
+        socket.end(JSON.stringify({ protocolVersion: 2, requestId: request.requestId, ok: false,
           error: { code: "NOT_FOUND", message: error instanceof Error ? error.message : "error" } }) + "\n");
       }
     });

@@ -1,0 +1,27 @@
+{
+  "name": "gattini-vscode",
+  "displayName": "Gattini",
+  "description": "Submit tasks to a local Gattini daemon and follow durable jobs",
+  "version": "0.2.0",
+  "private": true,
+  "engines": { "vscode": "^1.96.0" },
+  "main": "./dist/extension.js",
+  "activationEvents": ["onCommand:gattini.submitTask", "onCommand:gattini.attachJob", "onCommand:gattini.showJobs", "onCommand:gattini.showResult", "onCommand:gattini.showEvidence", "onCommand:gattini.approve", "onCommand:gattini.deny", "onCommand:gattini.cancel"],
+  "contributes": {
+    "commands": [
+      { "command": "gattini.submitTask", "title": "Gattini: Submit Task" },
+      { "command": "gattini.attachJob", "title": "Gattini: Attach Existing Job" },
+      { "command": "gattini.showJobs", "title": "Gattini: Show Jobs" },
+      { "command": "gattini.showResult", "title": "Gattini: Show Result" },
+      { "command": "gattini.showEvidence", "title": "Gattini: Show Evidence" },
+      { "command": "gattini.approve", "title": "Gattini: Approve Pending Action" },
+      { "command": "gattini.deny", "title": "Gattini: Deny Pending Action" },
+      { "command": "gattini.cancel", "title": "Gattini: Cancel Job" }
+    ]
+  },
+  "scripts": {
+    "build": "../node_modules/.bin/tsc -p tsconfig.json",
+    "typecheck": "../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.cjs"
+  }
+}

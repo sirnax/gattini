@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "node:test";
 import { startDaemon } from "../src/daemon/server.js";
+import { RELEASE_VERSION } from "../src/core/release.js";
 
 const directories: string[] = [];
 const daemons: Array<{ close(): Promise<void> }> = [];
@@ -97,6 +98,12 @@ test("CLI submits and retrieves a fake job through the daemon", async () => {
   const retrieved = await invoke("result", job.jobId);
   assert.equal(retrieved.status, 0, retrieved.stderr);
   assert.equal((JSON.parse(retrieved.stdout) as { jobId: string }).jobId, job.jobId);
+  const events = await invoke("events", job.jobId, "--after-sequence", "1", "--limit", "1");
+  assert.equal(events.status, 0, events.stderr);
+  const page = JSON.parse(events.stdout) as { jobId: string; nextSequence: number; events: Array<{ sequence: number }> };
+  assert.equal(page.jobId, job.jobId);
+  assert.equal(page.nextSequence, 2);
+  assert.deepEqual(page.events.map(event => event.sequence), [2]);
   assert.ok(daemon.socketPath);
 });
 
@@ -151,8 +158,8 @@ test("protocol mismatch and malformed JSON return typed request errors", async (
 
 test("daemon release mismatch fails before a job is persisted", async () => {
   const { daemon, path } = await daemonAt();
-  const hello = result(await request(daemon.socketPath, { ...wire("hello", "hello", {}), clientVersion: "0.1.0" }));
-  assert.deepEqual(hello, { version: "0.1.0", protocolVersion: 1, databaseSchemaVersion: 7 });
+  const hello = result(await request(daemon.socketPath, { ...wire("hello", "hello", {}), clientVersion: RELEASE_VERSION }));
+  assert.deepEqual(hello, { version: RELEASE_VERSION, protocolVersion: 1, databaseSchemaVersion: 7 });
   const mismatch = await request(daemon.socketPath, { ...wire("wrong_release", "start", {
     task: "must not persist", idempotencyKey: "wrong-release", role: "code",
   }), clientVersion: "0.0.9" });

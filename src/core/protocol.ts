@@ -1,10 +1,10 @@
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
 
-export type Method = "hello" | "start" | "followup" | "review" | "status" | "result" | "cancel" | "cleanup.preview" | "approvals.list" | "approve" | "deny";
+export type Method = "hello" | "start" | "followup" | "review" | "status" | "result" | "cancel" | "cleanup.preview" | "approvals.list" | "approve" | "deny" | "events.list" | "evidence.read";
 
 export interface Request {
-  protocolVersion: 1;
+  protocolVersion: 1 | 2;
   clientVersion?: string;
   requestId: string;
   method: Method;
@@ -12,8 +12,8 @@ export interface Request {
 }
 
 export type Response =
-  | { protocolVersion: 1; requestId: string; ok: true; result: unknown }
-  | { protocolVersion: 1; requestId: string; ok: false; error: { code: string; message: string } };
+  | { protocolVersion: 1 | 2; requestId: string; ok: true; result: unknown }
+  | { protocolVersion: 1 | 2; requestId: string; ok: false; error: { code: string; message: string } };
 
 export class ProtocolError extends Error {
   constructor(public readonly code: string, message: string, public readonly requestId = "") {
@@ -29,11 +29,12 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function parseRequest(value: unknown): Request {
   if (!isRecord(value)) throw new ProtocolError("INVALID_REQUEST", "Request must be an object");
   const requestId = typeof value.requestId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value.requestId) ? value.requestId : "";
-  if (value.protocolVersion !== PROTOCOL_VERSION) throw new ProtocolError("PROTOCOL_MISMATCH", "Unsupported protocol version; expected 1", requestId);
+  if (value.protocolVersion !== 1 && value.protocolVersion !== PROTOCOL_VERSION) throw new ProtocolError("PROTOCOL_MISMATCH", "Unsupported protocol version; expected 1 or 2", requestId);
   if (!requestId) throw new ProtocolError("INVALID_REQUEST", "Invalid request ID");
   if (Object.keys(value).some(key => !["protocolVersion", "clientVersion", "requestId", "method", "params"].includes(key))) throw new ProtocolError("INVALID_REQUEST", "Unknown request field", requestId);
   if (value.clientVersion !== undefined && (typeof value.clientVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(value.clientVersion))) throw new ProtocolError("INVALID_REQUEST", "Invalid client version", requestId);
-  if (value.method !== "hello" && value.method !== "start" && value.method !== "followup" && value.method !== "review" && value.method !== "status" && value.method !== "result" && value.method !== "cancel" && value.method !== "cleanup.preview" && value.method !== "approvals.list" && value.method !== "approve" && value.method !== "deny") throw new ProtocolError("INVALID_REQUEST", "Unsupported method", requestId);
+  if (value.method !== "hello" && value.method !== "start" && value.method !== "followup" && value.method !== "review" && value.method !== "status" && value.method !== "result" && value.method !== "cancel" && value.method !== "cleanup.preview" && value.method !== "approvals.list" && value.method !== "approve" && value.method !== "deny" && value.method !== "events.list" && value.method !== "evidence.read") throw new ProtocolError("INVALID_REQUEST", "Unsupported method", requestId);
+  if ((value.method === "events.list" || value.method === "evidence.read") && value.protocolVersion !== 2) throw new ProtocolError("PROTOCOL_MISMATCH", `${value.method} requires protocol v2`, requestId);
   if (!isRecord(value.params)) throw new ProtocolError("INVALID_REQUEST", "Params must be an object", requestId);
   return value as unknown as Request;
 }

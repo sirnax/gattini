@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, readFileSync, realpathSync } from "node:fs";
+import { chmodSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { runFakeTask } from "../adapters/fake.js";
 import { parseJob, parseRuntimeConfig, parseRuntimeEvent, parseRuntimeResult, type RuntimeResult } from "../core/contracts.js";
@@ -1171,7 +1171,7 @@ export class JobStore {
       runtimeSessionId: row.runtime_session_id, resolved: row.resolved_json ? JSON.parse(row.resolved_json) as unknown : null };
   }
 
-  result(jobId: string, attemptId?: string): { jobId: string; state: State; attemptId?: string; result: RuntimeResult | null; pinnedSource?: unknown } {
+  result(jobId: string, attemptId?: string, maxArtifactBytes?: number): { jobId: string; state: State; attemptId?: string; result: RuntimeResult | null; pinnedSource?: unknown } {
     this.expireApprovals();
     const row = this.rowById(jobId);
     const turn = attemptId
@@ -1185,9 +1185,15 @@ export class JobStore {
     if (result?.snapshot?.artifact) {
       const artifact = result.snapshot.artifact;
       try {
+        if (maxArtifactBytes !== undefined && (statSync(artifact.path).size > maxArtifactBytes || statSync(artifact.diffPath).size > maxArtifactBytes)) {
+          throw new ProtocolError("EVIDENCE_TOO_LARGE", "Retained evidence exceeds the editor read limit");
+        }
         if (createHash("sha256").update(readFileSync(artifact.path)).digest("hex") !== artifact.sha256 ||
             createHash("sha256").update(readFileSync(artifact.diffPath)).digest("hex") !== artifact.diffFileSha256) throw new Error("changed");
-      } catch { throw new ProtocolError("EVIDENCE_INVALID", "Retained snapshot or diff is missing or changed"); }
+      } catch (error) {
+        if (error instanceof ProtocolError) throw error;
+        throw new ProtocolError("EVIDENCE_INVALID", "Retained snapshot or diff is missing or changed");
+      }
     }
     const pinned = this.db.prepare("SELECT source_job_id,source_attempt_id,snapshot_sha,diff_sha FROM pinned_reviews WHERE review_job_id = ?")
       .get(jobId) as { source_job_id: string; source_attempt_id: string; snapshot_sha: string; diff_sha: string } | undefined;
@@ -1200,6 +1206,53 @@ export class JobStore {
     this.rowById(jobId);
     return this.db.prepare("SELECT event_json FROM events WHERE job_id = ? ORDER BY sequence").all(jobId)
       .map(row => JSON.parse((row as { event_json: string }).event_json) as unknown);
+  }
+
+  eventPage(jobId: string, afterSequence: number, limit: number): { jobId: string; events: Array<{ jobId: string; sequence: number; at: string | null; type: string; detail: Record<string, never> }>; nextSequence: number; hasMore: boolean } {
+    this.rowById(jobId);
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new ProtocolError("INVALID_CURSOR", "Event cursor or page limit is invalid");
+    }
+    const bounds = this.db.prepare("SELECT coalesce(max(sequence),0) AS high FROM events WHERE job_id = ?").get(jobId) as { high: number };
+    if (afterSequence > bounds.high) throw new ProtocolError("CURSOR_FUTURE", "Event cursor is beyond the job high-water mark");
+    const rows = this.db.prepare("SELECT sequence,event_json FROM events WHERE job_id = ? AND sequence > ? ORDER BY sequence LIMIT ?")
+      .all(jobId, afterSequence, limit + 1) as Array<{ sequence: number; event_json: string }>;
+    if (rows.length && rows[0]?.sequence !== afterSequence + 1) throw new ProtocolError("EVENT_GAP", "Event history has a gap at the cursor");
+    const selected = rows.slice(0, limit);
+    const events = selected.map((row, index) => {
+      if (row.sequence !== afterSequence + index + 1) throw new ProtocolError("EVENT_GAP", "Event history has a missing sequence");
+      const stored = JSON.parse(row.event_json) as unknown;
+      const value = typeof stored === "object" && stored !== null && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
+      const type = typeof value.type === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value.type) ? value.type : "runtime-event";
+      const at = typeof value.timestamp === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value.timestamp) && value.timestamp.length <= 40 ? value.timestamp : null;
+      return { jobId, sequence: row.sequence, at, type, detail: {} as Record<string, never> };
+    });
+    return { jobId, events, nextSequence: events.at(-1)?.sequence ?? afterSequence, hasMore: rows.length > limit };
+  }
+
+  evidenceRead(jobId: string, attemptId: string | undefined, kind: "diff" | "snapshot"): { jobId: string; attemptId?: string; kind: "diff" | "snapshot"; sha256: string; text: string; truncated: false } {
+    const saved = this.result(jobId, attemptId, 64 * 1024);
+    const snapshot = saved.result?.snapshot;
+    if (!snapshot?.artifact) throw new ProtocolError("EVIDENCE_INVALID", "No verified retained snapshot is available");
+    let text: string;
+    if (kind === "diff") {
+      const path = snapshot.artifact.diffPath;
+      try {
+        if (statSync(path).size > 64 * 1024) throw new ProtocolError("EVIDENCE_TOO_LARGE", "Retained diff exceeds the editor read limit");
+        const bytes = readFileSync(path);
+        if (createHash("sha256").update(bytes).digest("hex") !== snapshot.artifact.diffFileSha256) throw new Error("changed");
+        text = bytes.toString("utf8");
+      } catch (error) {
+        if (error instanceof ProtocolError) throw error;
+        throw new ProtocolError("EVIDENCE_INVALID", "Retained diff is missing or changed");
+      }
+    } else {
+      text = JSON.stringify({ snapshotSha: snapshot.snapshotSha, diffSha256: snapshot.diffSha256,
+        changedFiles: snapshot.changedFiles.slice(0, 100), acceptance: snapshot.acceptance });
+      if (Buffer.byteLength(text) > 64 * 1024) throw new ProtocolError("EVIDENCE_TOO_LARGE", "Snapshot metadata exceeds the editor read limit");
+    }
+    return { jobId, ...(saved.attemptId ? { attemptId: saved.attemptId } : {}), kind,
+      sha256: createHash("sha256").update(text).digest("hex"), text, truncated: false };
   }
 
   close(): void { this.db.close(); }

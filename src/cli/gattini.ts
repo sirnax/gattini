@@ -7,11 +7,11 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { RELEASE_VERSION } from "../core/release.js";
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 
-type Command = "start" | "run" | "followup" | "review" | "status" | "result" | "cancel" | "cleanup.preview" | "approvals.list" | "approve" | "deny";
+type Command = "start" | "run" | "followup" | "review" | "status" | "result" | "cancel" | "cleanup.preview" | "approvals.list" | "approve" | "deny" | "events.list";
 type JsonObject = Record<string, unknown>;
 interface Response {
   protocolVersion: number;
@@ -34,6 +34,7 @@ function usage(): string {
     "  gattini run --task-file PATH --idempotency-key KEY [start options] [--poll-ms 100..5000] [--cancel-on-interrupt] [--json]",
     "  gattini start --task-file PATH --idempotency-key KEY --role code --repo PATH --base-sha SHA --checks-file PATH --trusted-local-code --require-approval [--json]",
     "  gattini status JOB_ID [--json]",
+    "  gattini events JOB_ID [--after-sequence N] [--limit 1..100] [--json]",
     "  gattini followup JOB_ID --task-file PATH --idempotency-key KEY [--json]",
     "  gattini review JOB_ID --idempotency-key KEY [--json]",
     "  gattini result JOB_ID [--attempt-id ID] [--json]",
@@ -54,8 +55,8 @@ function nonEmpty(value: string | undefined, label: string, max = 256): string {
 
 function parseArgs(argv: string[]): { command: Command; params: JsonObject; json: boolean; pollMs: number; cancelOnInterrupt: boolean } {
   const command = argv[0] === "approvals" && argv[1] === "list" ? "approvals.list"
-    : argv[0] === "cleanup" && argv[1] === "preview" ? "cleanup.preview" : argv[0];
-  if (command !== "start" && command !== "run" && command !== "followup" && command !== "review" && command !== "status" && command !== "result" && command !== "cancel" && command !== "cleanup.preview" && command !== "approvals.list" && command !== "approve" && command !== "deny") {
+    : argv[0] === "cleanup" && argv[1] === "preview" ? "cleanup.preview" : argv[0] === "events" ? "events.list" : argv[0];
+  if (command !== "start" && command !== "run" && command !== "followup" && command !== "review" && command !== "status" && command !== "result" && command !== "cancel" && command !== "cleanup.preview" && command !== "approvals.list" && command !== "approve" && command !== "deny" && command !== "events.list") {
     throw new CliError(`Unknown command.\n${usage()}`);
   }
   const args = argv.slice(command === "approvals.list" || command === "cleanup.preview" ? 2 : 1);
@@ -111,6 +112,22 @@ function parseArgs(argv: string[]): { command: Command; params: JsonObject; json
     if (args.length > 1) throw new CliError(`cleanup preview accepts at most one job ID\n${usage()}`);
     return { command, params: args.length ? { jobId: nonEmpty(args[0], "Job ID", 128) } : {},
       json, pollMs: 500, cancelOnInterrupt: false };
+  }
+  if (command === "events.list") {
+    const jobId = nonEmpty(args.shift(), "Job ID", 128);
+    const values = new Map<string, string>();
+    for (let i = 0; i < args.length; i += 1) {
+      const flag = args[i];
+      if ((flag !== "--after-sequence" && flag !== "--limit") || values.has(flag)) throw new CliError(`Unexpected or duplicate argument: ${flag ?? ""}`);
+      const value = args[++i];
+      if (value === undefined) throw new CliError(`Missing value for ${flag}`);
+      values.set(flag, value);
+    }
+    const cursor = values.get("--after-sequence") ?? "0";
+    const limit = values.get("--limit") ?? "100";
+    if (!/^(0|[1-9][0-9]*)$/.test(cursor) || !Number.isSafeInteger(Number(cursor))) throw new CliError("--after-sequence must be a nonnegative safe integer");
+    if (!/^[1-9][0-9]*$/.test(limit) || Number(limit) > 100) throw new CliError("--limit must be 1..100");
+    return { command, params: { jobId, afterSequence: Number(cursor), limit: Number(limit) }, json, pollMs: 500, cancelOnInterrupt: false };
   }
   if (command === "followup" || command === "review" || command === "result") {
     const jobId = nonEmpty(args.shift(), "Job ID", 128);
@@ -198,7 +215,11 @@ function requestSocket(path: string, request: JsonObject): Promise<Response> {
           return;
         }
         const response = value as Response;
-        if (response.protocolVersion !== PROTOCOL_VERSION || response.requestId !== request.requestId || typeof response.ok !== "boolean") {
+        if (response.protocolVersion !== PROTOCOL_VERSION) {
+          fail(new CliError("Daemon protocol version is incompatible with this client", 3, "VERSION_MISMATCH"));
+          return;
+        }
+        if (response.requestId !== request.requestId || typeof response.ok !== "boolean") {
           fail(new CliError("Daemon protocol version or request ID did not match", 3, "PROTOCOL_ERROR"));
           return;
         }
