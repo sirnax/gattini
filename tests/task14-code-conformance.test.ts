@@ -65,9 +65,7 @@ function fixture(runtime: Runtime, mode: "complete" | "bad-proposal" | "hold-con
   const baseSha = git(source, "rev-parse", "HEAD");
   writeFileSync(join(source, "code.txt"), "dirty\n");
   writeFileSync(join(source, "untracked.txt"), "preserved\n");
-  const proposal = mode !== "bad-proposal"
-    ? JSON.stringify({ path: "code.txt", beforeSha256: sha("old\n"), afterBase64: Buffer.from("new\n").toString("base64") })
-    : JSON.stringify({ path: "../escape", beforeSha256: sha("old\n"), afterBase64: Buffer.from("new\n").toString("base64") });
+  const proposal = JSON.stringify({ path: mode === "bad-proposal" ? "../escape" : "code.txt", oldText: "old", newText: "new" });
   const calls = join(root, "calls.log");
   if (runtime === "opencode") {
     const script = `#!/bin/sh

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import test from "node:test";
 import { WorktreeManager } from "../src/environments/worktree.js";
-import { applyValidatedPatch, validatePatch } from "../src/verification/validated-patch.js";
+import { applyValidatedPatch, normalizeProposal, validatePatch } from "../src/verification/validated-patch.js";
 import { verifySnapshot } from "../src/verification/snapshot.js";
 
 const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
@@ -36,6 +36,30 @@ function fixture(t: { after: (fn: () => void) => void }) {
 function proposal(path = "README.md", before = "base\n", after = "changed\n"): string {
   return JSON.stringify({ path, beforeSha256: sha(before), afterBase64: Buffer.from(after).toString("base64") });
 }
+
+test("literal edit normalizes to the existing exact byte patch before approval", t => {
+  const f = fixture(t);
+  const edit = JSON.stringify({ path: "README.md", oldText: "base", newText: "changed" });
+  const normalized = normalizeProposal(edit, f.worktree, f.baseSha);
+  assert.equal(normalized, proposal());
+  assert.equal(normalizeProposal(proposal(), f.worktree, f.baseSha), proposal());
+  const patch = validatePatch(normalized, f.worktree, f.baseSha);
+  assert.equal(patch.beforeSha256, sha("base\n"));
+  assert.equal(readFileSync(join(f.worktree, "README.md"), "utf8"), "base\n");
+});
+
+test("literal edit rejects ambiguous, missing, unsafe, and changed targets", t => {
+  const f = fixture(t);
+  const edit = (path: string, oldText: string, newText: string) => JSON.stringify({ path, oldText, newText });
+  for (const value of [edit("README.md", "", "changed"), edit("README.md", "base", "base"),
+    edit("README.md", "absent", "changed"), edit("../README.md", "base", "changed"),
+    edit("README.md", "base", "\ud800"), JSON.stringify({ path: "README.md", oldText: "base", newText: "changed", mode: "100644" })]) {
+    assert.throws(() => normalizeProposal(value, f.worktree, f.baseSha));
+  }
+  writeFileSync(join(f.worktree, "README.md"), "base base\n");
+  assert.throws(() => normalizeProposal(edit("README.md", "base", "changed"), f.worktree, f.baseSha), /exactly once/);
+  assert.equal(readFileSync(join(f.source, "README.md"), "utf8"), "dirty source\n");
+});
 
 test("valid patch applies in owned worktree and verification binds to resulting snapshot", async t => {
   const f = fixture(t);

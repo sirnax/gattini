@@ -95,7 +95,16 @@ test("private proposal preflight and run use service policy and selected endpoin
     await preflightProposal(f.code, f.directory);
     const result = await runProposal(f.code, f.directory, "Fix", () => {});
     assert.equal(result.sessionId, "ses_private123");
-    assert.equal(f.entries().filter(args => args[0] === "run").length, 1);
+    const runs = f.entries().filter(args => args[0] === "run");
+    assert.equal(runs.length, 1);
+    assert.deepEqual(runs[0]?.slice(0, 8), ["run", "--server", URL, "--agent", "proposal", "--model", "provider/model", "--format"]);
+    const prompt = runs[0]?.at(-1) ?? "";
+    assert.match(prompt, /^Fix\n\nInspect the file with read-only tools\./);
+    assert.match(prompt, /exactly three string fields: \{"path":"\.\.\.","oldText":"\.\.\.","newText":"\.\.\."\}/);
+    assert.match(prompt, /existing tracked root-level regular UTF-8 file/);
+    assert.match(prompt, /nonempty literal substring that occurs exactly once/);
+    assert.match(prompt, /Do not edit files\. Do not calculate hashes or base64\./);
+    assert.doesNotMatch(prompt, /beforeSha256|afterBase64/);
     assert.equal(f.entries().every(args => args[0] === "--version" || args.includes("--server")), true);
   } finally { f.restore(); }
 });

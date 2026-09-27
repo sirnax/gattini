@@ -108,10 +108,13 @@ process.stdin.on("data", chunk => {
         send({ method: "turn/completed", params: { threadId: "thread-task14", turn: { id: "turn-task14", status: "completed" } } });
       }, 20);
     }
+    if (message.method === "thread/turns/list") {
+      send({ id: message.id, result: { data: [{ id: mode === "uncertain-wrong" ? "other-turn" : "turn-task14", status: "interrupted" }], nextCursor: null } });
+    }
     if (message.method === "turn/interrupt") {
       send({ id: message.id, result: {} });
       if (mode === "hold") send({ method: "turn/completed", params: { threadId: "thread-task14", turn: { id: "turn-task14", status: "interrupted" } } });
-      if (mode === "uncertain") setTimeout(() => process.exit(0), 20);
+      if (mode === "uncertain" || mode === "uncertain-wrong") setTimeout(() => process.exit(0), 20);
     }
   }
 });
@@ -279,5 +282,31 @@ test("an interrupt acknowledgement without runtime completion stays uncertain fo
     const status = await waitFor(daemon.socketPath, jobId, "interrupted");
     assert.equal(status.runtimeSessionId, runtime === "opencode" ? "ses_task14" : "thread-task14");
     assert.equal(ok(await request(daemon.socketPath, wire("result", "result", { jobId }))).result, null);
+  }
+});
+
+test("Codex uncertain cancellation reconciles only from its exact persisted interrupted turn", async () => {
+  for (const [mode, expected] of [["uncertain", "cancelled"], ["uncertain-wrong", "interrupted"]] as const) {
+    const { directory, calls } = fixture("codex", mode);
+    const daemon = await daemonAt(directory);
+    const started = ok(await request(daemon.socketPath, wire(`start-${mode}`, "start", {
+      task, role: "reviewer", idempotencyKey: `reconcile-${mode}`,
+    })));
+    const jobId = String(started.jobId);
+    await waitFor(daemon.socketPath, jobId, "running", true);
+    assert.equal(ok(await request(daemon.socketPath, wire(`cancel-${mode}`, "cancel", { jobId }))).state, "cancelling");
+    await waitFor(daemon.socketPath, jobId, "interrupted");
+    daemons.splice(daemons.indexOf(daemon), 1);
+    await daemon.close();
+    const restarted = await daemonAt(directory);
+    await waitFor(restarted.socketPath, jobId, expected);
+    const queryDeadline = Date.now() + 7_000;
+    while (Date.now() < queryDeadline && !readFileSync(calls, "utf8").includes('"method":"thread/turns/list"')) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    const messages = readFileSync(calls, "utf8").trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+    assert.equal(messages.filter(message => message.method === "turn/start").length, 1);
+    assert.equal(messages.filter(message => message.method === "thread/turns/list").length, 1);
+    assert.equal(ok(await request(restarted.socketPath, wire(`result-${mode}`, "result", { jobId }))).result, null);
   }
 });

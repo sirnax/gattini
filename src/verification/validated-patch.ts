@@ -49,6 +49,46 @@ function safeRoot(worktreePath: string, baseSha: string): string {
   return root;
 }
 
+/** Turn a read-only worker's literal edit into the existing approval-bound byte patch.
+ * Historical byte proposals remain valid for durable jobs created before this format.
+ */
+export function normalizeProposal(proposal: string, worktreePath: string, baseSha: string): string {
+  if (Buffer.byteLength(proposal) > MAX_PROPOSAL_BYTES) throw new PatchBoundaryError("Patch proposal exceeds 1 MiB");
+  let parsed: unknown;
+  try { parsed = JSON.parse(proposal) as unknown; } catch { throw new PatchBoundaryError("Malformed patch JSON"); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new PatchBoundaryError("Patch must be an object");
+  const edit = parsed as Record<string, unknown>;
+  if (Object.keys(edit).sort().join(",") === "afterBase64,beforeSha256,path") return proposal;
+  if (Object.keys(edit).sort().join(",") !== "newText,oldText,path" ||
+      typeof edit.path !== "string" || typeof edit.oldText !== "string" || typeof edit.newText !== "string") {
+    throw new PatchBoundaryError("Edit fields must be exactly path, oldText, newText");
+  }
+  const { path, oldText, newText } = edit as { path: string; oldText: string; newText: string };
+  if (!path || path === ".git" || path === "." || path === ".." || basename(path) !== path ||
+      /[/\\\0]/.test(path) || isAbsolute(path)) throw new PatchBoundaryError("Edit path must be one root-level filename");
+  if (!oldText || oldText === newText || Buffer.byteLength(oldText) > MAX_PROPOSAL_BYTES ||
+      Buffer.byteLength(newText) > MAX_PROPOSAL_BYTES ||
+      Buffer.from(oldText).toString("utf8") !== oldText || Buffer.from(newText).toString("utf8") !== newText) {
+    throw new PatchBoundaryError("Edit text is empty, unchanged, oversized, or invalid UTF-8");
+  }
+  const root = safeRoot(worktreePath, baseSha);
+  const target = join(root, path);
+  const info = lstatSync(target);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > MAX_PROPOSAL_BYTES) {
+    throw new PatchBoundaryError("Edit target must be a bounded regular file without links");
+  }
+  const before = readFileSync(target);
+  const source = before.toString("utf8");
+  if (!Buffer.from(source).equals(before)) throw new PatchBoundaryError("Edit target must be UTF-8 text");
+  const first = source.indexOf(oldText);
+  if (first < 0 || source.indexOf(oldText, first + 1) >= 0) throw new PatchBoundaryError("Edit oldText must occur exactly once");
+  const after = Buffer.from(source.slice(0, first) + newText + source.slice(first + oldText.length), "utf8");
+  if (after.length > MAX_PROPOSAL_BYTES) throw new PatchBoundaryError("Edit replacement exceeds 1 MiB");
+  const normalized = JSON.stringify({ path, beforeSha256: hash(before), afterBase64: after.toString("base64") });
+  validatePatch(normalized, root, baseSha);
+  return normalized;
+}
+
 /** Strict JSON wire format; no Git patch syntax, modes, links, or multiple paths. */
 export function validatePatch(proposal: string, worktreePath: string, baseSha: string): ValidatedPatch {
   if (Buffer.byteLength(proposal) > MAX_PROPOSAL_BYTES) throw new PatchBoundaryError("Patch proposal exceeds 1 MiB");

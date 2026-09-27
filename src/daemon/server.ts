@@ -16,10 +16,10 @@ import { parseVerificationCommands, type CodeJobInput, type CodeRoleConfig } fro
 import { getCodeSession, interruptCode, preflightProposal, runProposal } from "../adapters/opencode-code.js";
 import { WorktreeError, WorktreeManager } from "../environments/worktree.js";
 import { snapshotFingerprint, verifySnapshot } from "../verification/snapshot.js";
-import { applyValidatedPatch, validatePatch } from "../verification/validated-patch.js";
+import { applyValidatedPatch, normalizeProposal, validatePatch } from "../verification/validated-patch.js";
 import { buildPinnedReviewPrompt, PinnedReviewError } from "../verification/pinned-review.js";
 import { previewOwnedCleanup } from "../environments/cleanup-preview.js";
-import { preflightCodexReview, startCodexReview, type CodexReviewHandle } from "../adapters/codex-app-server.js";
+import { preflightCodexReview, readCodexTurnStatus, startCodexReview, type CodexReviewHandle } from "../adapters/codex-app-server.js";
 import { startCodexProposal, type CodexProposalHandle } from "../adapters/codex-proposal.js";
 
 export function stateDirectory(): string {
@@ -419,8 +419,9 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
           codexHandles.set(jobId, handle);
           const result = await handle.result;
           if (before !== await snapshotFingerprint(worktreePath, input.baseSha)) throw new Error("Read-only Codex proposal changed the worktree");
-          const patch = validatePatch(result.proposal, worktreePath, input.baseSha);
-          store.completeProposal(jobId, attemptId, result.identity.threadId, result.proposal, before, patch, result.usage);
+          const normalized = normalizeProposal(result.proposal, worktreePath, input.baseSha);
+          const patch = validatePatch(normalized, worktreePath, input.baseSha);
+          store.completeProposal(jobId, attemptId, result.identity.threadId, normalized, before, patch, result.usage);
           return;
         }
         const localClient = new AbortController();
@@ -432,8 +433,9 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
         const session = await getCodeSession(config, worktreePath, launched.sessionId);
         if (session.outcome !== "succeeded" || session.agent !== config.agent || `${session.model.providerID}/${session.model.id}` !== config.model || session.directory !== worktreePath) throw new Error("Proposal session identity or outcome differed");
         if (before !== await snapshotFingerprint(worktreePath, input.baseSha)) throw new Error("Read-only proposal changed the worktree");
-        const patch = validatePatch(launched.proposal, worktreePath, input.baseSha);
-        store.completeProposal(jobId, attemptId, launched.sessionId, launched.proposal, before, patch);
+        const normalized = normalizeProposal(launched.proposal, worktreePath, input.baseSha);
+        const patch = validatePatch(normalized, worktreePath, input.baseSha);
+        store.completeProposal(jobId, attemptId, launched.sessionId, normalized, before, patch);
       })().catch(() => {
         if (attemptId) store.failReview(jobId, attemptId);
         else store.failCodePreflight(jobId);
@@ -512,6 +514,22 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
       activeReviews.add(work);
       void work.finally(() => activeReviews.delete(work));
     } catch { /* Invalid saved config remains interrupted for manual inspection. */ }
+  }
+  for (const candidate of store.codexCancellationCandidates()) {
+    try {
+      const config = parseCodexRoleConfig(candidate.config);
+      if (config.model !== candidate.model || config.modelProvider !== candidate.modelProvider) continue;
+      const work = (async () => {
+        const status = await readCodexTurnStatus({ cwd: config.directory, executable: config.executable,
+          threadId: candidate.threadId, turnId: candidate.turnId }, { timeoutMs: 10_000 });
+        if (status === "interrupted") {
+          store.reconcileCodexCancelled(candidate.jobId, candidate.threadId, candidate.turnId);
+          if (store.status(candidate.jobId).state === "cancelled") scheduler.releaseHeld(candidate.jobId);
+        }
+      })().catch(() => { /* Keep uncertain jobs and scope locks when exact-turn lookup fails. */ });
+      activeReviews.add(work);
+      void work.finally(() => activeReviews.delete(work));
+    } catch { /* Invalid saved identity remains interrupted for manual inspection. */ }
   }
   return {
     socketPath,

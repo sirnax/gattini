@@ -100,6 +100,7 @@ export function startCodexReview(input: CodexReviewInput, options: CodexReviewOp
   let settled = false;
   let interruptRequested = false;
   let interruptResolve: ((value: CodexInterruptResult) => void) | null = null;
+  let interruptGraceTimer: NodeJS.Timeout | null = null;
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let resolveResult!: (value: CodexReviewResult) => void;
   let rejectResult!: (error: Error) => void;
@@ -107,6 +108,7 @@ export function startCodexReview(input: CodexReviewInput, options: CodexReviewOp
   const interruptResult = (): CodexInterruptResult => ({ confirmed: terminal === "interrupted", identity, terminalStatus: terminal });
   const cleanup = (): void => {
     clearTimeout(timer);
+    if (interruptGraceTimer) clearTimeout(interruptGraceTimer);
     options.signal?.removeEventListener("abort", onAbort);
     for (const request of pending.values()) request.reject(new CodexAppServerError("CLOSED", "Codex app-server closed", identity));
     pending.clear();
@@ -242,7 +244,14 @@ export function startCodexReview(input: CodexReviewInput, options: CodexReviewOp
     if (interruptRequested) return new Promise((resolve) => { const previous = interruptResolve; interruptResolve = (value) => { previous?.(value); resolve(value); }; });
     interruptRequested = true;
     const confirmation = new Promise<CodexInterruptResult>((resolve) => { interruptResolve = resolve; });
-    void request("turn/interrupt", { threadId: identity.threadId, turnId: identity.turnId }).catch(() => fail("INTERRUPT_FAILED", "Codex interrupt request failed"));
+    void request("turn/interrupt", { threadId: identity.threadId, turnId: identity.turnId }).catch(() => {
+      if (settled) return;
+      // The runtime can reject the RPC while an exact interrupted-turn
+      // notification is still in flight. Keep the child alive briefly so that
+      // notification can establish the terminal outcome; the RPC error itself
+      // never confirms cancellation.
+      interruptGraceTimer = setTimeout(() => fail("INTERRUPT_FAILED", "Codex interrupt request failed without terminal confirmation"), 1_000);
+    });
     return confirmation;
   };
   void (async () => {
@@ -273,4 +282,139 @@ export function startCodexReview(input: CodexReviewInput, options: CodexReviewOp
     }
   })();
   return { result, interrupt };
+}
+
+export interface CodexTurnStatusInput {
+  threadId: string;
+  turnId: string;
+  cwd: string;
+  executable?: string;
+}
+
+/** Read a persisted turn through a new, bounded app-server connection. Never resumes it. */
+export function readCodexTurnStatus(
+  input: CodexTurnStatusInput,
+  options: Pick<CodexReviewOptions, "timeoutMs" | "maxMessageBytes" | "maxEvents" | "spawn"> = {},
+): Promise<CodexReviewStatus | null> {
+  try { str(input.threadId, "threadId"); str(input.turnId, "turnId"); }
+  catch { throw new CodexAppServerError("INVALID_INPUT", "Exact thread and turn IDs are required"); }
+  if (typeof input.cwd !== "string" || !isAbsolute(input.cwd) || input.cwd.includes("\0")) throw new CodexAppServerError("INVALID_INPUT", "cwd must be absolute");
+  if (input.executable !== undefined) {
+    try { str(input.executable, "executable"); }
+    catch { throw new CodexAppServerError("INVALID_INPUT", "Invalid executable"); }
+  }
+  const timeoutMs = positiveInt(options.timeoutMs, 10_000, 30_000, "timeoutMs");
+  const maxMessageBytes = positiveInt(options.maxMessageBytes, 1_000_000, 4_000_000, "maxMessageBytes");
+  const maxEvents = positiveInt(options.maxEvents, 1_000, 10_000, "maxEvents");
+  const child = (options.spawn ?? ((executable, args, spawnOptions) => spawn(executable, args, spawnOptions)))(input.executable ?? "codex", ["app-server", "--listen", "stdio://"], { cwd: input.cwd, stdio: "pipe" });
+  const decoder = new StringDecoder("utf8");
+  let buffer = "";
+  let eventCount = 0;
+  let stderrBytes = 0;
+  let nextId = 1;
+  let settled = false;
+  let waiting: { id: number; resolve: (value: unknown) => void; reject: (error: Error) => void } | null = null;
+  let resolveResult!: (value: CodexReviewStatus | null) => void;
+  let rejectResult!: (error: Error) => void;
+  const result = new Promise<CodexReviewStatus | null>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+  const cleanup = (): void => {
+    clearTimeout(timer);
+    if (waiting) waiting.reject(new CodexAppServerError("CLOSED", "Codex app-server closed"));
+    waiting = null;
+    child.stdout.removeAllListeners();
+    child.stderr.removeAllListeners();
+    child.removeAllListeners();
+    child.kill();
+  };
+  const fail = (code: string, message: string): void => {
+    if (settled) return;
+    settled = true;
+    rejectResult(new CodexAppServerError(code, message));
+    cleanup();
+  };
+  const finish = (status: CodexReviewStatus | null): void => {
+    if (settled) return;
+    settled = true;
+    resolveResult(status);
+    cleanup();
+  };
+  const request = (method: string, params: RecordValue): Promise<unknown> => {
+    if (waiting) return Promise.reject(new CodexAppServerError("PROTOCOL_ERROR", "Concurrent status request"));
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      waiting = { id, resolve, reject };
+      const line = JSON.stringify({ id, method, params }) + "\n";
+      if (Buffer.byteLength(line) > maxMessageBytes) { fail("MESSAGE_TOO_LARGE", "Outbound Codex message too large"); return; }
+      child.stdin.write(line, error => { if (error) fail("CHILD_LOST", "Codex app-server stdin failed"); });
+    });
+  };
+  child.stdout.on("data", (chunk: Buffer) => {
+    if (settled) return;
+    buffer += decoder.write(chunk);
+    if (Buffer.byteLength(buffer) > maxMessageBytes) { fail("MESSAGE_TOO_LARGE", "Codex status message exceeded limit"); return; }
+    for (;;) {
+      const index = buffer.indexOf("\n");
+      if (index < 0 || settled) break;
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (Buffer.byteLength(line) > maxMessageBytes) { fail("MESSAGE_TOO_LARGE", "Codex status message exceeded limit"); break; }
+      if (++eventCount > maxEvents) { fail("EVENT_LIMIT", "Codex status event limit exceeded"); break; }
+      try {
+        const message = JSON.parse(line) as unknown;
+        if (!record(message)) throw new Error("Malformed response");
+        if ("id" in message && ("result" in message || "error" in message)) {
+          if (!waiting || message.id !== waiting.id) throw new Error("Unmatched response ID");
+          const request = waiting;
+          waiting = null;
+          if ("error" in message) request.reject(new CodexAppServerError("RPC_ERROR", "Codex status request failed"));
+          else request.resolve(message.result);
+        } else if ("id" in message) {
+          // Status lookup has no reason to approve or answer server requests.
+          fail("UNEXPECTED_REQUEST", "Unexpected Codex request during status lookup");
+        }
+      } catch { fail("MALFORMED_MESSAGE", "Malformed Codex status message"); }
+    }
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrBytes += chunk.length;
+    if (stderrBytes > maxMessageBytes) fail("MESSAGE_TOO_LARGE", "Codex status diagnostic stream exceeded limit");
+  });
+  child.on("error", () => fail("CHILD_LOST", "Codex app-server failed to start"));
+  child.on("close", () => fail("CHILD_LOST", "Codex app-server exited before status reply"));
+  const timer = setTimeout(() => fail("TIMEOUT", "Codex turn status lookup timed out"), timeoutMs);
+  void (async () => {
+    try {
+      await request("initialize", { clientInfo: { name: "gattini", title: "Gattini", version: "0.0.0" }, capabilities: null });
+      child.stdin.write(JSON.stringify({ method: "initialized" }) + "\n", error => { if (error) fail("CHILD_LOST", "Codex app-server stdin failed"); });
+      const cursors = new Set<string>();
+      let cursor: string | null = null;
+      for (let page = 0; page < 4; page += 1) {
+        const response = await request("thread/turns/list", { threadId: input.threadId, limit: 50, sortDirection: "desc", ...(cursor ? { cursor } : {}) });
+        if (!record(response) || !Array.isArray(response.data) || !(response.nextCursor === null || typeof response.nextCursor === "string")) throw new Error("Malformed turn list");
+        let found: CodexReviewStatus | null = null;
+        for (const value of response.data) {
+          if (!record(value)) throw new Error("Malformed turn");
+          const id = str(value.id, "turn.id");
+          const status = str(value.status, "turn.status");
+          if (!["inProgress", "completed", "failed", "interrupted"].includes(status)) throw new Error("Invalid turn status");
+          if (id === input.turnId) {
+            if (found !== null) throw new Error("Duplicate turn ID");
+            found = status === "inProgress" ? null : status as CodexReviewStatus;
+            if (status === "inProgress") { finish(null); return; }
+          }
+        }
+        if (found) { finish(found); return; }
+        if (response.nextCursor === null) { finish(null); return; }
+        if (response.nextCursor.length === 0 || cursors.has(response.nextCursor)) throw new Error("Invalid turn cursor");
+        cursor = response.nextCursor;
+        cursors.add(cursor);
+      }
+      finish(null);
+    } catch (error) {
+      if (settled) return;
+      if (error instanceof CodexAppServerError) fail(error.code, error.message);
+      else fail("PROTOCOL_ERROR", "Codex turn status lookup failed");
+    }
+  })();
+  return result;
 }

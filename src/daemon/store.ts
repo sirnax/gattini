@@ -972,6 +972,42 @@ export class JobStore {
       config: JSON.parse(row.config_json) as unknown, cancelRequested: row.cancel_requested === 1 }));
   }
 
+  codexCancellationCandidates(): Array<{ jobId: string; threadId: string; turnId: string; model: string; modelProvider: string; config: unknown }> {
+    const rows = this.db.prepare(`SELECT jobs.id, jobs.runtime_session_id, jobs.resolved_json, jobs.config_json
+      FROM jobs LEFT JOIN code_jobs ON code_jobs.job_id = jobs.id
+      WHERE jobs.state = 'interrupted' AND jobs.runtime_session_id IS NOT NULL
+      AND jobs.resolved_json IS NOT NULL AND code_jobs.job_id IS NULL
+      AND json_extract(jobs.config_json,'$.runtime') = 'codex'
+      AND coalesce((SELECT attempts.cancel_requested FROM attempts WHERE attempts.job_id=jobs.id ORDER BY attempts.rowid DESC LIMIT 1),0) = 1`).all() as Array<{
+        id: string; runtime_session_id: string; resolved_json: string; config_json: string;
+      }>;
+    return rows.flatMap(row => {
+      const resolved = JSON.parse(row.resolved_json) as { threadId?: unknown; turnId?: unknown; model?: unknown; modelProvider?: unknown };
+      if (resolved.threadId !== row.runtime_session_id || typeof resolved.turnId !== "string" || !resolved.turnId ||
+          typeof resolved.model !== "string" || typeof resolved.modelProvider !== "string") return [];
+      return [{ jobId: row.id, threadId: row.runtime_session_id, turnId: resolved.turnId,
+        model: resolved.model, modelProvider: resolved.modelProvider,
+        config: JSON.parse(row.config_json) as unknown }];
+    });
+  }
+
+  reconcileCodexCancelled(jobId: string, threadId: string, turnId: string): void {
+    this.transaction(() => {
+      const row = this.rowById(jobId);
+      if (row.state !== "interrupted" || row.runtime_session_id !== threadId || !row.resolved_json) return;
+      if ((JSON.parse(row.config_json) as { runtime?: unknown }).runtime !== "codex" ||
+          this.db.prepare("SELECT 1 FROM code_jobs WHERE job_id = ?").get(jobId)) return;
+      const identity = JSON.parse(row.resolved_json) as { threadId?: unknown; turnId?: unknown };
+      if (identity.threadId !== threadId || identity.turnId !== turnId) return;
+      const latest = this.db.prepare("SELECT id,cancel_requested FROM attempts WHERE job_id = ? ORDER BY rowid DESC LIMIT 1")
+        .get(jobId) as { id: string; cancel_requested: number } | undefined;
+      if (latest?.cancel_requested !== 1) return;
+      this.db.prepare("UPDATE jobs SET state = 'cancelled', updated_at = ? WHERE id = ?")
+        .run(new Date().toISOString(), jobId);
+      this.db.prepare("UPDATE attempts SET phase = 'cancelled' WHERE id = ?").run(latest.id);
+    });
+  }
+
   reconcileTerminal(jobId: string, sessionId: string, outcome: "succeeded" | "failed" | "interrupted", cancelRequested: boolean): void {
     const row = this.rowById(jobId);
     if (row.state !== "interrupted" || row.runtime_session_id !== sessionId) return;

@@ -222,7 +222,7 @@ export async function runProposal(role: OpenCodeCodeRoleConfig, worktreePath: st
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw new RangeError("Proposal timeout must be 1..300000 ms");
   await preflightProposal(role, worktreePath);
   const directory = canonicalWorktree(worktreePath);
-  const instruction = `${task}\n\nReturn ONLY strict JSON with path, beforeSha256, and afterBase64. Do not edit files.`;
+  const instruction = `${task}\n\nInspect the file with read-only tools. Return ONLY strict JSON with exactly three string fields: {"path":"...","oldText":"...","newText":"..."}. Choose one existing tracked root-level regular UTF-8 file. Set oldText to a nonempty literal substring that occurs exactly once in that file, and newText to its replacement. Do not edit files. Do not calculate hashes or base64. Do not use Markdown fences or add commentary.`;
   return new Promise((resolve, reject) => {
     const server = privateServerUrl(role);
     const child = spawn("opencode", ["run", ...(server ? ["--server", server] : []), "--agent", role.agent, "--model", role.model, "--format", "json", instruction], {

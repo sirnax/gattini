@@ -13,7 +13,7 @@ type Message = Record<string, unknown>;
 const root = realpathSync(mkdtempSync(join(tmpdir(), "gattini-codex-proposal-")));
 test.after(() => rmSync(root, { recursive: true, force: true }));
 const input: CodexProposalInput = { model: "gpt-6-sol", modelProvider: "openai", executable: "codex", cwd: root, task: "Fix the fixture" };
-const proposal = JSON.stringify({ path: "math.mjs", beforeSha256: "a".repeat(64), afterBase64: Buffer.from("fixed\n").toString("base64") });
+const proposal = JSON.stringify({ path: "math.mjs", oldText: "return a - b;", newText: "return a + b;" });
 const terminal = (status: string): Message => ({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status } } });
 
 class MockServer extends EventEmitter {
@@ -77,10 +77,21 @@ test("passes a strict raw proposal, exact identity, and usage from a read-only t
   assert.equal(turn.input[0]?.text, codexProposalPrompt(input.task));
   assert.match(turn.input[0]?.text ?? "", /Use available read-only tools to inspect the worktree before answering/);
   assert.match(turn.input[0]?.text ?? "", /Read-only inspection commands are allowed/);
-  assert.match(turn.input[0]?.text ?? "", /Verify its current bytes with a tool and compute their SHA-256/);
-  assert.match(turn.input[0]?.text ?? "", /If read-only access or any required computation is unavailable/);
+  assert.match(turn.input[0]?.text ?? "", /nonempty literal oldText that appears exactly once/);
+  assert.match(turn.input[0]?.text ?? "", /Do not calculate a hash or base64-encode replacement bytes/);
+  assert.match(turn.input[0]?.text ?? "", /only keys must be path, oldText, and newText/);
+  assert.match(turn.input[0]?.text ?? "", /If read-only inspection is unavailable/);
   assert.match(turn.input[0]?.text ?? "", /do not return a proposal-shaped JSON object/);
   assert.match(turn.input[0]?.text ?? "", /Do not edit files, run commands that change state or access the network, request approval, or delegate/);
+});
+
+test("extracts one terminal proposal after a preliminary assistant message", async () => {
+  const server = new MockServer();
+  const handle = startCodexProposal(input, opts(server, () => queueMicrotask(() => {
+    server.emitMessage({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", item: { type: "agentMessage", text: "I inspected the tracked fixture. " } } });
+    completed(server, proposal);
+  })));
+  assert.equal((await handle.result).proposal, proposal);
 });
 
 test("rejects denied approval, noncompleted turn, and malformed JSON", async () => {
@@ -104,8 +115,15 @@ test("rejects denied approval, noncompleted turn, and malformed JSON", async () 
     "```json\n" + proposal + "\n```",
     "{bad}",
     JSON.stringify({ ...JSON.parse(proposal) as object, extra: true }),
-    JSON.stringify({ path: "x", beforeSha256: "bad", afterBase64: "x" }),
-    JSON.stringify({ path: "math.mjs", beforeSha256: "", afterBase64: "" }),
+    JSON.stringify({ path: "x", beforeSha256: "a".repeat(64), afterBase64: "eA==" }),
+    JSON.stringify({ path: "math.mjs", oldText: "", newText: "fixed" }),
+    JSON.stringify({ path: "math.mjs", oldText: "return a - b;", newText: "return a - b;" }),
+    JSON.stringify({ path: "", oldText: "before", newText: "after" }),
+    JSON.stringify({ path: "math.mjs", oldText: "before", newText: null }),
+    proposal + "Trailing commentary",
+    proposal + proposal,
+    JSON.stringify({ path: "math.mjs", oldText: "", newText: "placeholder" }) + proposal,
+    proposal + JSON.stringify({ note: "another object" }),
   ]) {
     const server = new MockServer();
     await assert.rejects(startCodexProposal(input, opts(server, () => queueMicrotask(() => completed(server, bad)))).result, code("INVALID_PROPOSAL"));

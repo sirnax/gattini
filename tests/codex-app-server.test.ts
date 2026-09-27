@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { CodexAppServerError, preflightCodexReview, startCodexReview, type CodexReviewInput } from "../src/adapters/codex-app-server.js";
+import { CodexAppServerError, preflightCodexReview, readCodexTurnStatus, startCodexReview, type CodexReviewInput } from "../src/adapters/codex-app-server.js";
 
 const input: CodexReviewInput = { model: "gpt-6-sol", modelProvider: "openai", cwd: "/tmp", task: "Review this fixture" };
 const thread = { id: "thread-1", sessionId: "session-1", cliVersion: "0.157.1", model: input.model, modelProvider: input.modelProvider, cwd: input.cwd };
@@ -117,6 +117,36 @@ const errorCode = (code: string) => (error: unknown): boolean => error instanceo
   await assert.rejects(pending.result, errorCode("CHILD_LOST"));
   assert.deepEqual(await unconfirmed, { confirmed: false, identity: { threadId: "thread-1", sessionId: "session-1", turnId: "turn-1", cliVersion: "0.157.1", model: input.model, modelProvider: input.modelProvider }, terminalStatus: null });
  });
+ test("interrupt RPC error allows a delayed exact terminal confirmation", async () => {
+  const server = new MockServer((message, mock) => {
+    if (message.method === "turn/interrupt") {
+      mock.emitMessage({ id: message.id, error: { code: -32000, message: "Turn already stopping" } });
+      setTimeout(() => mock.emitMessage(terminal("interrupted")), 25);
+    } else defaultReply(message, mock);
+  });
+  let confirmation!: Promise<unknown>;
+  const handle = startCodexReview(input, { ...options(server), onIdentity: () => { confirmation = handle.interrupt(); } });
+  const result = await handle.result;
+  assert.equal(result.status, "interrupted");
+  assert.deepEqual(await confirmation, { confirmed: true, identity: result.identity, terminalStatus: "interrupted" });
+  assert.deepEqual(server.sent.find(message => message.method === "turn/interrupt")?.params,
+    { threadId: "thread-1", turnId: "turn-1" });
+ });
+ test("interrupt RPC error without exact confirmation remains uncertain", async () => {
+  for (const [kind, expected] of [["missing", "INTERRUPT_FAILED"], ["wrong-turn", "MALFORMED_MESSAGE"], ["child-loss", "CHILD_LOST"]] as const) {
+    const server = new MockServer((message, mock) => {
+      if (message.method === "turn/interrupt") {
+        mock.emitMessage({ id: message.id, error: { code: -32000, message: "Turn already stopping" } });
+        if (kind === "wrong-turn") setTimeout(() => mock.emitMessage({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "wrong-turn", status: "interrupted" } } }), 20);
+        if (kind === "child-loss") setTimeout(() => mock.lose(), 20);
+      } else defaultReply(message, mock);
+    });
+    let confirmation!: Promise<unknown>;
+    const handle = startCodexReview(input, { ...options(server), timeoutMs: 2_000, onIdentity: () => { confirmation = handle.interrupt(); } });
+    await assert.rejects(handle.result, errorCode(expected), kind);
+    assert.deepEqual(await confirmation, { confirmed: false, identity: { threadId: "thread-1", sessionId: "session-1", turnId: "turn-1", cliVersion: "0.157.1", model: input.model, modelProvider: input.modelProvider }, terminalStatus: null }, kind);
+  }
+ });
  test("timeout and child loss remain uncertain", async () => {
   const timeout = new MockServer((message, mock) => { if (message.method === "initialize") mock.reply(message, {}); });
   await assert.rejects(startCodexReview(input, { ...options(timeout), timeoutMs: 20 }).result, errorCode("TIMEOUT"));
@@ -139,4 +169,44 @@ const errorCode = (code: string) => (error: unknown): boolean => error instanceo
   const result = await startCodexReview(input, options(server)).result;
   assert.equal(result.status, "completed");
   assert.equal(result.usage.inputTokens, null);
+ });
+ test("read-only turn lookup confirms only the exact persisted interrupted turn", async () => {
+  const server = new MockServer((message, mock) => {
+    if (message.method === "thread/turns/list") mock.reply(message, { data: [{ id: "another-turn", status: "completed" }, { id: "turn-1", status: "interrupted" }], nextCursor: null });
+    else defaultReply(message, mock);
+  });
+  const status = await readCodexTurnStatus({ threadId: "thread-1", turnId: "turn-1", cwd: "/tmp" }, { ...options(server), timeoutMs: 1_000 });
+  assert.equal(status, "interrupted");
+  assert.deepEqual(server.sent.find(message => message.method === "thread/turns/list")?.params,
+    { threadId: "thread-1", limit: 50, sortDirection: "desc" });
+  assert.equal(server.sent.some(message => message.method === "thread/start" || message.method === "turn/start" || message.method === "thread/resume"), false);
+ });
+ test("turn lookup reports wrong or in-progress ID as unconfirmed", async () => {
+  for (const turn of [{ id: "other-turn", status: "interrupted" }, { id: "turn-1", status: "inProgress" }]) {
+    const server = new MockServer((message, mock) => {
+      if (message.method === "thread/turns/list") mock.reply(message, { data: [turn], nextCursor: null });
+      else defaultReply(message, mock);
+    });
+    assert.equal(await readCodexTurnStatus({ threadId: "thread-1", turnId: "turn-1", cwd: "/tmp" }, { ...options(server), timeoutMs: 1_000 }), null);
+  }
+ });
+ test("turn lookup rejects malformed responses, RPC errors and timeouts", async () => {
+  for (const [reply, expected] of [
+    [{ data: [{ status: "interrupted" }], nextCursor: null }, "PROTOCOL_ERROR"],
+    [{ data: [{ id: "turn-1", status: "bogus" }], nextCursor: null }, "PROTOCOL_ERROR"],
+    [{ data: "invalid", nextCursor: null }, "PROTOCOL_ERROR"],
+  ] as const) {
+    const server = new MockServer((message, mock) => {
+      if (message.method === "thread/turns/list") mock.reply(message, reply);
+      else defaultReply(message, mock);
+    });
+    await assert.rejects(readCodexTurnStatus({ threadId: "thread-1", turnId: "turn-1", cwd: "/tmp" }, { ...options(server), timeoutMs: 1_000 }), errorCode(expected));
+  }
+  const error = new MockServer((message, mock) => {
+    if (message.method === "thread/turns/list") mock.emitMessage({ id: message.id, error: { code: -32000, message: "Unavailable" } });
+    else defaultReply(message, mock);
+  });
+  await assert.rejects(readCodexTurnStatus({ threadId: "thread-1", turnId: "turn-1", cwd: "/tmp" }, { ...options(error), timeoutMs: 1_000 }), errorCode("RPC_ERROR"));
+  const timeout = new MockServer((message, mock) => { if (message.method === "initialize") mock.reply(message, {}); });
+  await assert.rejects(readCodexTurnStatus({ threadId: "thread-1", turnId: "turn-1", cwd: "/tmp" }, { ...options(timeout), timeoutMs: 20 }), errorCode("TIMEOUT"));
  });
