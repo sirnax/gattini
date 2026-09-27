@@ -149,6 +149,20 @@ test("protocol mismatch and malformed JSON return typed request errors", async (
   assert.equal((malformed.error as Record<string, unknown>).code, "INVALID_REQUEST");
 });
 
+test("daemon release mismatch fails before a job is persisted", async () => {
+  const { daemon, path } = await daemonAt();
+  const hello = result(await request(daemon.socketPath, { ...wire("hello", "hello", {}), clientVersion: "0.1.0" }));
+  assert.deepEqual(hello, { version: "0.1.0", protocolVersion: 1, databaseSchemaVersion: 7 });
+  const mismatch = await request(daemon.socketPath, { ...wire("wrong_release", "start", {
+    task: "must not persist", idempotencyKey: "wrong-release", role: "code",
+  }), clientVersion: "0.0.9" });
+  assert.equal(mismatch.ok, false);
+  assert.equal((mismatch.error as Record<string, unknown>).code, "VERSION_MISMATCH");
+  const db = new DatabaseSync(join(path, "jobs.sqlite"));
+  try { assert.equal(db.prepare("SELECT count(*) AS count FROM jobs").get()?.count, 0); }
+  finally { db.close(); }
+});
+
 test("empty and existing schema v1 databases migrate to v7; newer schemas are rejected", async () => {
   const emptyPath = tempDirectory();
   const { daemon: emptyDaemon } = await daemonAt(emptyPath);

@@ -24,6 +24,7 @@ import { startCodexProposal, type CodexProposalHandle } from "../adapters/codex-
 import { parseClaudeRoleConfig, type ClaudeRoleConfig } from "../core/claude-role-config.js";
 import { preflightClaudeTurn, startClaudeTurn, type ClaudeTurnHandle } from "../adapters/claude-cli.js";
 import { unwrapClaudeProposal } from "../adapters/claude-proposal.js";
+import { DATABASE_SCHEMA_VERSION, RELEASE_VERSION } from "../core/release.js";
 
 export function stateDirectory(): string {
   const override = process.env.GATTINI_STATE_DIR;
@@ -82,6 +83,10 @@ async function dispatch(store: JobStore, worktrees: WorktreeManager, request: Re
   scheduleCodexReview: ScheduleCodexReview, scheduleCodexCancellation: ScheduleCodexCancellation,
   scheduleClaudeReview: ScheduleClaudeReview, scheduleClaudeCancellation: ScheduleClaudeCancellation): Promise<unknown> {
   const params = request.params;
+  if (request.method === "hello") {
+    exactParams(params, []);
+    return { version: RELEASE_VERSION, protocolVersion: PROTOCOL_VERSION, databaseSchemaVersion: DATABASE_SCHEMA_VERSION };
+  }
   if (request.method === "cleanup.preview") {
     exactParams(params, ["jobId"]);
     const jobId = params.jobId === undefined ? undefined : stringParam(params, "jobId", 128);
@@ -254,6 +259,11 @@ function handleConnection(socket: Socket, store: JobStore, worktrees: WorktreeMa
     try {
       const request = parseRequest(JSON.parse(buffer.subarray(0, end).toString("utf8")));
       requestId = request.requestId;
+      if (request.clientVersion !== undefined && request.clientVersion !== RELEASE_VERSION) {
+        reply({ protocolVersion: PROTOCOL_VERSION, requestId, ok: false,
+          error: { code: "VERSION_MISMATCH", message: `Client ${request.clientVersion} is incompatible with daemon ${RELEASE_VERSION}` } });
+        return;
+      }
       void dispatch(store, worktrees, request, directory, scheduleReview, scheduleFollowup, scheduleCancellation, scheduleCode, scheduleCodeCancellation, scheduleApply, scheduleCodexReview, scheduleCodexCancellation, scheduleClaudeReview, scheduleClaudeCancellation)
         .then(result => reply({ protocolVersion: PROTOCOL_VERSION, requestId, ok: true, result }))
         .catch(error => reply({ protocolVersion: PROTOCOL_VERSION, requestId, ok: false,

@@ -5,6 +5,7 @@ import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { RELEASE_VERSION } from "../core/release.js";
 
 const PROTOCOL_VERSION = 1;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -227,7 +228,7 @@ function safeText(value: unknown): string {
 }
 
 async function callDaemon(path: string, method: string, params: JsonObject): Promise<unknown> {
-  const response = await requestSocket(path, { protocolVersion: PROTOCOL_VERSION, requestId: randomUUID(), method, params });
+  const response = await requestSocket(path, { protocolVersion: PROTOCOL_VERSION, clientVersion: RELEASE_VERSION, requestId: randomUUID(), method, params });
   if (!response.ok) {
     const code = response.error?.code ?? "PROTOCOL_ERROR";
     throw new CliError(response.error?.message ?? "Daemon request failed", code === "INVALID_REQUEST" ? 2 : code === "APPROVAL_REQUIRED" ? 4 : 3, code);
@@ -335,6 +336,18 @@ async function main(): Promise<void> {
       parsed.params = params;
     }
     const path = socketPath();
+    let hello: JsonObject;
+    try {
+      hello = record(await callDaemon(path, "hello", {}));
+    } catch (error) {
+      if (error instanceof CliError && (error.code === "INVALID_REQUEST" || error.code === "PROTOCOL_MISMATCH")) {
+        throw new CliError("Daemon does not support this release handshake; stop it and start the matching gattinid", 3, "VERSION_MISMATCH");
+      }
+      throw error;
+    }
+    if (hello.version !== RELEASE_VERSION || hello.protocolVersion !== PROTOCOL_VERSION) {
+      throw new CliError(`Client ${RELEASE_VERSION} is incompatible with daemon ${safeText(hello.version)}`, 3, "VERSION_MISMATCH");
+    }
     let value = await callDaemon(path, parsed.command === "run" ? "start" : parsed.command, parsed.params);
     if (parsed.command === "run") {
       const outcome = await runJob(path, value, parsed.pollMs, parsed.cancelOnInterrupt);

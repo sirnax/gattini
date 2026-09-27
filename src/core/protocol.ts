@@ -1,10 +1,11 @@
 export const PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
 
-export type Method = "start" | "followup" | "review" | "status" | "result" | "cancel" | "cleanup.preview" | "approvals.list" | "approve" | "deny";
+export type Method = "hello" | "start" | "followup" | "review" | "status" | "result" | "cancel" | "cleanup.preview" | "approvals.list" | "approve" | "deny";
 
 export interface Request {
   protocolVersion: 1;
+  clientVersion?: string;
   requestId: string;
   method: Method;
   params: Record<string, unknown>;
@@ -30,8 +31,9 @@ export function parseRequest(value: unknown): Request {
   const requestId = typeof value.requestId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value.requestId) ? value.requestId : "";
   if (value.protocolVersion !== PROTOCOL_VERSION) throw new ProtocolError("PROTOCOL_MISMATCH", "Unsupported protocol version; expected 1", requestId);
   if (!requestId) throw new ProtocolError("INVALID_REQUEST", "Invalid request ID");
-  if (Object.keys(value).some(key => !["protocolVersion", "requestId", "method", "params"].includes(key))) throw new ProtocolError("INVALID_REQUEST", "Unknown request field", requestId);
-  if (value.method !== "start" && value.method !== "followup" && value.method !== "review" && value.method !== "status" && value.method !== "result" && value.method !== "cancel" && value.method !== "cleanup.preview" && value.method !== "approvals.list" && value.method !== "approve" && value.method !== "deny") throw new ProtocolError("INVALID_REQUEST", "Unsupported method", requestId);
+  if (Object.keys(value).some(key => !["protocolVersion", "clientVersion", "requestId", "method", "params"].includes(key))) throw new ProtocolError("INVALID_REQUEST", "Unknown request field", requestId);
+  if (value.clientVersion !== undefined && (typeof value.clientVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(value.clientVersion))) throw new ProtocolError("INVALID_REQUEST", "Invalid client version", requestId);
+  if (value.method !== "hello" && value.method !== "start" && value.method !== "followup" && value.method !== "review" && value.method !== "status" && value.method !== "result" && value.method !== "cancel" && value.method !== "cleanup.preview" && value.method !== "approvals.list" && value.method !== "approve" && value.method !== "deny") throw new ProtocolError("INVALID_REQUEST", "Unsupported method", requestId);
   if (!isRecord(value.params)) throw new ProtocolError("INVALID_REQUEST", "Params must be an object", requestId);
   return value as unknown as Request;
 }
