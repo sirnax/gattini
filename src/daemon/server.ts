@@ -342,6 +342,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
             if (store.cancellationNeeded(jobId)) scheduleClaudeCancellation(jobId, identity.sessionId);
           },
           onDiagnostic: diagnostic => store.recordClaudeDiagnostic(jobId, attemptId!, diagnostic),
+          onProcessExit: evidence => store.recordClaudeProcessExit(jobId, attemptId!, evidence),
         });
         claudeHandles.set(jobId, handle);
         const result = await handle.result;
@@ -506,6 +507,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
               if (store.cancellationNeeded(jobId)) scheduleClaudeCancellation(jobId, identity.sessionId);
             },
             onDiagnostic: diagnostic => store.recordClaudeDiagnostic(jobId, attemptId!, diagnostic),
+            onProcessExit: evidence => store.recordClaudeProcessExit(jobId, attemptId!, evidence),
           });
           claudeHandles.set(jobId, handle);
           const result = await handle.result;

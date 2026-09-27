@@ -1,5 +1,7 @@
 # Claude worker guarded-code and cancellation recheck — fresh approval required
 
+The [executable sign-off scenario](CLAUDE_WORKER_SIGNOFF.md) now supersedes the manual execution procedure below, with the same two provider turns, model, fixture and usage thresholds. Its new states are `state-signoff-code` and `state-signoff-cancel`; it retains a private `signoff-report.json`. No live continuation has run yet.
+
 Prepared on 27 September 2026 after the owner-approved [four-row matrix](CLAUDE_WORKER_DEFINITIVE_MATRIX.md) passed its direct CLI probe and durable reviewer, then stopped at guarded code. The code turn returned the intended JSON patch inside one complete Markdown `json` fence. Gattini rejected that wrapper before an apply approval; no file changed. The Claude-only parser now removes precisely that wrapper before the existing strict one-file patch and snapshot checks, and the offline Node 24/26 suites pass. **The repair has not been live verified.** The prior approval covered one code invocation and was exhausted. This plan asks for **at most two additional Claude provider turns**, in order, with no retry.
 
 ## Fixed destination, fixture and bound

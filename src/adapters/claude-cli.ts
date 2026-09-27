@@ -41,6 +41,8 @@ export interface ClaudeTurnOptions {
   maxTextBytes?: number;
   onIdentity?: (identity: ClaudeTurnIdentity) => void;
   onDiagnostic?: (diagnostic: { code: string; eventType: string }) => void;
+  onProcessExit?: (evidence: { sessionId: string | null; pid: number | null; exitCode: number | null;
+    signal: string | null; signalSent: string | null; cancelRequested: boolean; resultSeen: boolean }) => void;
 }
 export interface ClaudeTurnHandle {
   result: Promise<ClaudeTurnResult>;
@@ -95,6 +97,7 @@ export function startClaudeTurn(config: ClaudeTurnConfig, options: ClaudeTurnOpt
   let settled = false;
   let closeObserved = false;
   let cancelling = false;
+  let signalSent: NodeJS.Signals | null = null;
   let cancelResolve: ((result: { confirmed: boolean; sessionId: string | null }) => void) | null = null;
   const resolveCancel = (confirmed: boolean): void => {
     const callback = cancelResolve;
@@ -129,8 +132,8 @@ export function startClaudeTurn(config: ClaudeTurnConfig, options: ClaudeTurnOpt
   const signalOwned = (signal: NodeJS.Signals): void => {
     if (!child || closeObserved) return;
     try {
-      if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
-      else child.kill(signal);
+      if (process.platform !== "win32" && child.pid) { process.kill(-child.pid, signal); signalSent = signal; }
+      else if (child.kill(signal)) signalSent = signal;
     } catch { /* Exit is observed separately; failed signalling never confirms cancellation. */ }
   };
   const terminate = (error: ClaudeCliError): void => {
@@ -246,7 +249,15 @@ export function startClaudeTurn(config: ClaudeTurnConfig, options: ClaudeTurnOpt
       child.once("close", (code, signal) => {
         closeObserved = true;
         clearTimers();
-        resolveCancel(cancelling && identity !== null);
+        try {
+          options.onProcessExit?.({ sessionId: identity?.sessionId ?? null, pid: child?.pid ?? null,
+            exitCode: code, signal, signalSent, cancelRequested: cancelling, resultSeen });
+        } catch {
+          finishError(new ClaudeCliError("EVIDENCE_FAILED", "Could not retain Claude process exit evidence", identity));
+          resolveCancel(false);
+          return;
+        }
+        resolveCancel(cancelling && identity !== null && signalSent !== null && !resultSeen);
         if (settled) return;
         if (streamError) { finishError(streamError); return; }
         if (cancelling) { finishError(new ClaudeCliError("INTERRUPTED", "Claude turn was interrupted", identity)); return; }
@@ -264,7 +275,9 @@ export function startClaudeTurn(config: ClaudeTurnConfig, options: ClaudeTurnOpt
     }
   })();
   const interrupt = (): Promise<{ confirmed: boolean; sessionId: string | null }> => {
-    if (closeObserved || settled) return Promise.resolve({ confirmed: false, sessionId: identity?.sessionId ?? null });
+    // A terminal model result can precede process close. Killing during that
+    // shutdown window must not turn a completed answer into cancellation proof.
+    if (closeObserved || settled || resultSeen) return Promise.resolve({ confirmed: false, sessionId: identity?.sessionId ?? null });
     if (cancelResolve) return new Promise(resolve => { const previous = cancelResolve; cancelResolve = value => { previous?.(value); resolve(value); }; });
     cancelling = true;
     const confirmation = new Promise<{ confirmed: boolean; sessionId: string | null }>(resolve => { cancelResolve = resolve; });

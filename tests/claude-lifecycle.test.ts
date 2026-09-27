@@ -184,6 +184,17 @@ test("Claude cancellation is confirmed only for an identified exiting child; mis
         await waitFor(daemon.socketPath, started.jobId, "running", value => !!value.runtimeSessionId);
         ok(await call(daemon.socketPath, "cancel", { jobId: started.jobId }));
         await waitFor(daemon.socketPath, started.jobId, "cancelled");
+        const db = new DatabaseSync(join(f.state, "jobs.sqlite"));
+        try {
+          const events = db.prepare("SELECT event_json FROM events WHERE job_id=?").all(started.jobId) as Array<{ event_json: string }>;
+          const exited = events.map(row => JSON.parse(row.event_json)).find(event => event.type === "process-exit");
+          assert.ok(exited, "retain owned child exit evidence for cancellation sign-off");
+          assert.equal(exited.cancelRequested, true); assert.equal(exited.resultSeen, false);
+          assert.equal(exited.signalSent, "SIGTERM");
+          assert.equal(exited.sessionId, ok(await call(daemon.socketPath, "status", { jobId: started.jobId })).runtimeSessionId);
+          assert.ok(Number.isInteger(exited.pid));
+          assert.throws(() => process.kill(exited.pid, 0), { code: "ESRCH" });
+        } finally { db.close(); }
       } else {
         await waitFor(daemon.socketPath, started.jobId, "interrupted");
         assert.equal(ok(await call(daemon.socketPath, "result", { jobId: started.jobId })).result, null);

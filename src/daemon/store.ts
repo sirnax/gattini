@@ -426,6 +426,19 @@ export class JobStore {
     });
   }
 
+  recordClaudeProcessExit(jobId: string, attemptId: string, evidence: { sessionId: string | null; pid: number | null;
+    exitCode: number | null; signal: string | null; signalSent: string | null; cancelRequested: boolean; resultSeen: boolean }): void {
+    this.assertAttempt(jobId, attemptId);
+    if (this.rowById(jobId).runtime_session_id !== evidence.sessionId ||
+        (evidence.pid !== null && (!Number.isSafeInteger(evidence.pid) || evidence.pid <= 0)) ||
+        (evidence.exitCode !== null && !Number.isSafeInteger(evidence.exitCode)) ||
+        (evidence.signal !== null && !/^SIG[A-Z0-9]{1,16}$/.test(evidence.signal)) ||
+        (evidence.signalSent !== null && !["SIGTERM", "SIGKILL"].includes(evidence.signalSent))) throw new Error("Invalid Claude process exit evidence");
+    const next = this.db.prepare("SELECT coalesce(max(sequence),0)+1 AS sequence FROM events WHERE job_id=?").get(jobId) as { sequence: number };
+    this.db.prepare("INSERT INTO events (job_id,sequence,event_json,attempt_id) VALUES (?,?,?,?)")
+      .run(jobId, next.sequence, JSON.stringify({ source: "claude", type: "process-exit", ...evidence }), attemptId);
+  }
+
   recordClaudeDiagnostic(jobId: string, attemptId: string, diagnostic: { code: string; eventType: string }): void {
     this.transaction(() => {
       this.assertAttempt(jobId, attemptId);

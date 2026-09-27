@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { ClaudeCliError, preflightClaudeTurn, startClaudeTurn, type ClaudeTurnConfig } from "../src/adapters/claude-cli.js";
 
 const fakeSource = `#!/usr/bin/env node
@@ -29,6 +29,7 @@ process.stdin.on('end', () => {
   if (task === 'bad-model') init.model = 'claude-other';
   if (task === 'bad-tools') init.tools.push('Bash');
   event(init);
+  if (task === 'exit-without-result') { setTimeout(() => {}, 200); return; }
   if (task === 'hang') { setInterval(() => {}, 1000); return; }
   if (task === 'malformed') { process.stdout.write('{broken\\n'); return; }
   if (task === 'unknown-event') { event({ type: 'unknown_event', session_id }); return; }
@@ -45,6 +46,9 @@ process.stdin.on('end', () => {
   if (task === 'large-text') result.result = 'x'.repeat(100);
   if (task === 'unknown-usage') { delete result.usage; delete result.total_cost_usd; }
   event(result);
+  // Keep the transport open after a completed model turn to expose cancellation
+  // during CLI shutdown, independently of the model's completion time.
+  if (task === 'terminal-linger') setTimeout(() => {}, 1000);
   if (task === 'nonzero') process.exitCode = 1;
 });
 `;
@@ -122,6 +126,45 @@ test("cancellation without identity and timeout stay unconfirmed", async () => f
   assert.deepEqual(await missing.interrupt(), { confirmed: false, sessionId: null });
   const timed = startClaudeTurn({ ...base, task: "hang" }, { timeoutMs: 100 });
   await assert.rejects(timed.result, errorCode("TIMEOUT"));
+}));
+
+test("failure to retain process exit evidence cannot confirm cancellation", async () => fixture(async base => {
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const turn = startClaudeTurn({ ...base, task: "hang" }, { onIdentity: () => release(),
+    onProcessExit: () => { throw new Error("offline evidence-store failure"); }, timeoutMs: 5000 });
+  const failed = assert.rejects(turn.result, errorCode("EVIDENCE_FAILED"));
+  await ready;
+  assert.equal((await turn.interrupt()).confirmed, false);
+  await failed;
+}));
+
+test("natural child exit after failed signal delivery cannot confirm cancellation", async () => fixture(async base => {
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const turn = startClaudeTurn({ ...base, task: "exit-without-result" }, { onIdentity: () => release(), timeoutMs: 5000 });
+  const failed = assert.rejects(turn.result, errorCode("INTERRUPTED"));
+  await ready;
+  const kill = mock.method(process, "kill", () => { throw Object.assign(new Error("simulated process already exited"), { code: "ESRCH" }); });
+  try { assert.equal((await turn.interrupt()).confirmed, false); }
+  finally { kill.mock.restore(); await failed; }
+}));
+
+test("a terminal answer awaiting process close is not confirmed as cancelled", async () => fixture(async base => {
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const turn = startClaudeTurn({ ...base, task: "terminal-linger" }, { onIdentity: () => release(), timeoutMs: 5_000 });
+  // Attach rejection handling before interrupting the pre-fix transport.
+  const outcome = turn.result.then(value => ({ value }), error => ({ error }));
+  await ready;
+  // The fake emits init and result synchronously, then lingers for one second.
+  // Let the current stdout batch drain before testing the shutdown window.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const cancelled = await turn.interrupt();
+  const result = await outcome;
+  assert.equal(cancelled.confirmed, false, "a model result already arrived; this is not a cancellation pass");
+  assert.ok("value" in result, "late cancellation must preserve the terminal answer");
+  assert.equal(result.value.text, "Reviewed.");
 }));
 
 test("failure diagnostics retain only bounded event type metadata", async () => fixture(async base => {
