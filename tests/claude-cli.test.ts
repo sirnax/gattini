@@ -31,7 +31,12 @@ process.stdin.on('end', () => {
   event(init);
   if (task === 'hang') { setInterval(() => {}, 1000); return; }
   if (task === 'malformed') { process.stdout.write('{broken\\n'); return; }
-  if (task === 'unknown-event') { event({ type: 'rate_limit_event', session_id }); return; }
+  if (task === 'unknown-event') { event({ type: 'unknown_event', session_id }); return; }
+  if (task === 'rate-limit-allowed' || task === 'rate-limit-warning' || task === 'rate-limit-rejected' || task === 'rate-limit-unknown' || task === 'rate-limit-wrong-session') {
+    event({ type: 'rate_limit_event', session_id: task === 'rate-limit-wrong-session' ? 'other' : session_id,
+      rate_limit_info: { status: task === 'rate-limit-warning' ? 'allowed_warning' : task === 'rate-limit-rejected' ? 'rejected' : task === 'rate-limit-unknown' ? 'other' : 'allowed', rateLimitType: 'five_hour' } });
+    if (task !== 'rate-limit-allowed' && task !== 'rate-limit-warning') return;
+  }
   if (task === 'budget') { result.is_error = true; result.subtype = 'error_max_budget_usd'; }
   if (task === 'oversize') { event({ type: 'assistant', session_id, message: { content: [{ type: 'text', text: 'x'.repeat(1100000) }] } }); return; }
   if (task === 'permission') { result.is_error = true; result.subtype = 'error_during_execution'; }
@@ -83,11 +88,21 @@ test("identity, tool, malformed, output, permission and usage failures fail clos
     ["changed-session", "PROTOCOL_ERROR"], ["malformed", "PROTOCOL_ERROR"],
     ["oversize", "OUTPUT_TOO_LARGE"], ["permission", "PROTOCOL_ERROR"],
     ["bad-usage", "PROTOCOL_ERROR"], ["nonzero", "RUNTIME_FAILED"],
+    ["rate-limit-rejected", "RATE_LIMITED"], ["rate-limit-unknown", "PROTOCOL_ERROR"],
+    ["rate-limit-wrong-session", "PROTOCOL_ERROR"],
   ];
   for (const [task, code] of cases) {
     await assert.rejects(startClaudeTurn({ ...base, task }).result, errorCode(code), task);
   }
   await assert.rejects(startClaudeTurn({ ...base, task: "large-text" }, { maxTextBytes: 10 }).result, errorCode("PROTOCOL_ERROR"));
+}));
+
+test("recognized allowed rate-limit notices preserve the terminal result", async () => fixture(async base => {
+  for (const task of ["rate-limit-allowed", "rate-limit-warning"]) {
+    const result = await startClaudeTurn({ ...base, task }).result;
+    assert.equal(result.text, "Reviewed.");
+    assert.deepEqual(result.usage, { inputTokens: 7, outputTokens: 3, costUsd: 0.001 });
+  }
 }));
 
 test("cancellation confirms only after exit with recorded identity", async () => fixture(async base => {
@@ -110,7 +125,7 @@ test("cancellation without identity and timeout stay unconfirmed", async () => f
 }));
 
 test("failure diagnostics retain only bounded event type metadata", async () => fixture(async base => {
-  for (const [task, eventType] of [["unknown-event", "rate_limit_event/none"], ["budget", "result/error_max_budget_usd"]] as const) {
+  for (const [task, eventType] of [["unknown-event", "unknown_event/none"], ["budget", "result/error_max_budget_usd"]] as const) {
     const diagnostics: Array<{ code: string; eventType: string }> = [];
     await assert.rejects(startClaudeTurn({ ...base, task }, { onDiagnostic: value => diagnostics.push(value) }).result,
       errorCode("PROTOCOL_ERROR"));

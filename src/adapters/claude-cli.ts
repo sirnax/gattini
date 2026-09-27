@@ -160,6 +160,13 @@ export function startClaudeTurn(config: ClaudeTurnConfig, options: ClaudeTurnOpt
     if (event.session_id !== undefined && event.session_id !== expectedSessionId) throw new Error("Claude stream changed session ID");
     if (event.model !== undefined && event.model !== config.model) throw new Error("Claude stream changed model");
     if (resultSeen) throw new Error("Claude event followed terminal result");
+    if (event.type === "rate_limit_event") {
+      if (event.session_id !== expectedSessionId || !record(event.rate_limit_info)) throw new Error("Malformed Claude rate limit event");
+      const status = event.rate_limit_info.status;
+      if (status === "rejected") throw new ClaudeCliError("RATE_LIMITED", "Claude reported a rejected rate limit", identity);
+      if (status !== "allowed" && status !== "allowed_warning") throw new Error("Unknown Claude rate limit status");
+      return;
+    }
     if (event.type === "result") {
       if (event.session_id !== expectedSessionId || event.is_error !== false || event.subtype !== "success" || typeof event.result !== "string" ||
         (event.permission_denials !== undefined && (!Array.isArray(event.permission_denials) || event.permission_denials.length > 0))) throw new Error("Claude result denied, failed or changed identity");
@@ -217,7 +224,7 @@ export function startClaudeTurn(config: ClaudeTurnConfig, options: ClaudeTurnOpt
           if (!line.trim()) continue;
           if (++eventCount > MAX_EVENTS) { terminate(new ClaudeCliError("EVENT_LIMIT", "Claude event count exceeded limit", identity)); break; }
           try { parseEvent(line); }
-          catch {
+          catch (error) {
             try {
               const rejected = JSON.parse(line) as unknown;
               if (record(rejected) && typeof rejected.type === "string") {
@@ -226,7 +233,7 @@ export function startClaudeTurn(config: ClaudeTurnConfig, options: ClaudeTurnOpt
                 rejectedEventType = `${kind}/${subtype}`;
               } else rejectedEventType = "malformed";
             } catch { rejectedEventType = "malformed"; }
-            terminate(new ClaudeCliError("PROTOCOL_ERROR", "Malformed or unsafe Claude stream event", identity));
+            terminate(error instanceof ClaudeCliError ? error : new ClaudeCliError("PROTOCOL_ERROR", "Malformed or unsafe Claude stream event", identity));
           }
         }
         if (!streamError && Buffer.byteLength(pending) > MAX_LINE_BYTES) terminate(new ClaudeCliError("OUTPUT_TOO_LARGE", "Claude event exceeded limit", identity));
