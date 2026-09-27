@@ -1,6 +1,8 @@
 # Proposed Claude worker live matrix — approval pending
 
-Prepared offline on 27 September 2026. **No Claude worker provider turn has been authorized or run.** This plan needs a fresh, specific owner approval before any paid Claude turn. The prior OpenCode/Codex approval and the earlier Claude *caller* check do not cover it.
+Prepared offline on 27 September 2026. **No Claude worker provider turn has run.** The prior OpenCode/Codex approval and the earlier Claude *caller* check did not cover this matrix.
+
+The owner approved this exact three-turn matrix on 27 September 2026. The first read-only preflight stopped before any job or provider call: `/opt/homebrew/bin/claude --version` returned `2.1.283 (Claude Code)`, but `claude auth status --json` returned exit 1 with non-secret fields `loggedIn: false`, `authMethod: none`, `apiProvider: firstParty`. The shell had no existing `ANTHROPIC_API_KEY` or Bedrock/Vertex/Foundry selector. The Git tree, base SHA and six input hashes still matched this plan. No state directory, role mapping, daemon, job, approval, or Claude provider process was created. Authentication is now required from the owner before the approved matrix can proceed; do not silently switch provider or credentials.
 
 ## Exact disposable inputs
 
