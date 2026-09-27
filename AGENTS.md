@@ -2,7 +2,7 @@
 
 ## Project context
 
-Read [README.md](README.md), [the master plan](docs/roadmaps/GATTINI_MASTER_PLAN.md), and [the roadmap](docs/roadmaps/GATTINI_ROADMAP.md) before making project changes. Tasks 1–13 and Checkpoint 4 are complete within their documented limits; Task 14 and Gate B remain open. The CLI/daemon has durable fake jobs, OpenCode review, one observed read-only Codex worker turn, exact-session OpenCode reviewer follow-up, bounded admission, and a narrowly guarded code proposal/apply path. Check the roadmap and ADR 009 before claiming a broader live integration or a later planned capability exists.
+Read [README.md](README.md), [the master plan](docs/roadmaps/GATTINI_MASTER_PLAN.md), and [the roadmap](docs/roadmaps/GATTINI_ROADMAP.md) before making project changes. Tasks 1–14 and Checkpoint 4 are complete within their documented limits; Checkpoint 5 and Gate B await human review. The CLI/daemon has durable fake jobs, OpenCode review, an observed read-only Codex worker turn, exact-session OpenCode reviewer follow-up, bounded admission, and a narrowly guarded code proposal/apply path observed live on OpenCode and Codex. Claude worker support remains planned. Check the roadmap and ADR 009 before claiming a broader live integration or a later planned capability exists.
 
 ## Agent orchestration
 
