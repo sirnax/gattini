@@ -12,7 +12,7 @@ import { JobStore } from "../src/daemon/store.js";
 const model = "claude-haiku-4-5-20251001";
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 
-function fixture(mode: "complete" | "hold" | "bad-model" | "rate-rejected" | "tool-error" = "complete") {
+function fixture(mode: "complete" | "fenced" | "fenced-extra" | "hold" | "bad-model" | "rate-rejected" | "tool-error" = "complete") {
   const root = mkdtempSync(join(tmpdir(), "gattini-claude-lifecycle-"));
   const state = join(root, "state"), source = join(root, "source"), executable = join(root, "fake-claude");
   mkdirSync(state, { mode: 0o700 }); mkdirSync(source);
@@ -41,8 +41,10 @@ process.stdin.on('end', () => {
   emit({ type: 'user', session_id, message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'old', is_error: ${JSON.stringify(mode)} === 'tool-error' }] } });
   if (${JSON.stringify(mode)} === 'tool-error') return;
   const proposal = JSON.stringify({ path: 'code.txt', oldText: 'old', newText: 'new' });
+  const proposalText = ${JSON.stringify(mode)} === 'fenced' ? '\`\`\`json\\n' + proposal + '\\n\`\`\`' :
+    ${JSON.stringify(mode)} === 'fenced-extra' ? 'Here is the patch:\\n\`\`\`json\\n' + proposal + '\\n\`\`\`' : proposal;
   emit({ type: 'result', subtype: 'success', is_error: false, session_id,
-    result: task.includes('Prepare one read-only code proposal') ? proposal : 'Offline Claude review.',
+    result: task.includes('Prepare one read-only code proposal') ? proposalText : 'Offline Claude review.',
     usage: { input_tokens: 12, output_tokens: 6 }, total_cost_usd: 0.001 });
 });
 `, { mode: 0o700 });
@@ -97,7 +99,7 @@ test("Claude reviewer persists exact identity and bounded usage across restart",
 });
 
 test("Claude guarded code needs two exact approvals and retains passing snapshot", async () => {
-  const f = fixture(); let daemon: RunningDaemon | undefined;
+  const f = fixture("fenced"); let daemon: RunningDaemon | undefined;
   try {
     daemon = await startDaemon(f.state);
     const started = ok(await call(daemon.socketPath, "start", { role: "code", task: "Change code.txt from old to new", idempotencyKey: "claude-code",
@@ -132,6 +134,27 @@ test("Claude guarded code needs two exact approvals and retains passing snapshot
     assert.equal(readFileSync(join(f.source, "dirty.txt"), "utf8"), "untracked sentinel\n");
     await daemon.close(); daemon = await startDaemon(f.state);
     assert.deepEqual(ok(await call(daemon.socketPath, "result", { jobId: started.jobId })).result, result);
+  } finally { await daemon?.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Claude proposal prose outside one JSON fence fails before apply approval", async () => {
+  const f = fixture("fenced-extra"); let daemon: RunningDaemon | undefined;
+  try {
+    daemon = await startDaemon(f.state);
+    const started = ok(await call(daemon.socketPath, "start", { role: "code", task: "Change code.txt from old to new", idempotencyKey: "claude-fenced-extra",
+      trustedLocal: true, requireApproval: true, repositoryPath: f.source, baseSha: f.baseSha,
+      verificationCommands: [{ argv: [process.execPath, "--version"], timeoutMs: 3000 }] }));
+    const launch = ok(await call(daemon.socketPath, "approvals.list", {})).find((entry: any) => entry.jobId === started.jobId);
+    ok(await call(daemon.socketPath, "approve", { approvalId: launch.id }));
+    await waitFor(daemon.socketPath, started.jobId, "interrupted");
+    assert.equal(ok(await call(daemon.socketPath, "result", { jobId: started.jobId })).result, null);
+    assert.equal(ok(await call(daemon.socketPath, "approvals.list", {})).length, 0);
+    assert.equal(readFileSync(join(started.worktreePath, "code.txt"), "utf8"), "old\n");
+    const db = new DatabaseSync(join(f.state, "jobs.sqlite"));
+    try {
+      const row = db.prepare("SELECT event_json FROM events WHERE job_id=? ORDER BY sequence DESC LIMIT 1").get(started.jobId) as { event_json: string } | undefined;
+      assert.deepEqual(JSON.parse(row!.event_json), { source: "claude", type: "diagnostic", code: "PROPOSAL_INVALID", eventType: "result/proposal" });
+    } finally { db.close(); }
   } finally { await daemon?.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 

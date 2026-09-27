@@ -23,6 +23,7 @@ import { preflightCodexReview, readCodexTurnStatus, startCodexReview, type Codex
 import { startCodexProposal, type CodexProposalHandle } from "../adapters/codex-proposal.js";
 import { parseClaudeRoleConfig, type ClaudeRoleConfig } from "../core/claude-role-config.js";
 import { preflightClaudeTurn, startClaudeTurn, type ClaudeTurnHandle } from "../adapters/claude-cli.js";
+import { unwrapClaudeProposal } from "../adapters/claude-proposal.js";
 
 export function stateDirectory(): string {
   const override = process.env.GATTINI_STATE_DIR;
@@ -509,8 +510,15 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
           claudeHandles.set(jobId, handle);
           const result = await handle.result;
           if (before !== await snapshotFingerprint(worktreePath, input.baseSha)) throw new Error("Read-only Claude proposal changed the worktree");
-          const normalized = normalizeProposal(result.text, worktreePath, input.baseSha);
-          const patch = validatePatch(normalized, worktreePath, input.baseSha);
+          let normalized: string;
+          let patch: ReturnType<typeof validatePatch>;
+          try {
+            normalized = normalizeProposal(unwrapClaudeProposal(result.text), worktreePath, input.baseSha);
+            patch = validatePatch(normalized, worktreePath, input.baseSha);
+          } catch {
+            store.recordClaudeDiagnostic(jobId, attemptId, { code: "PROPOSAL_INVALID", eventType: "result/proposal" });
+            throw new Error("Claude proposal failed strict patch validation");
+          }
           store.completeProposal(jobId, attemptId, result.identity.sessionId, normalized, before, patch, result.usage);
           return;
         }
