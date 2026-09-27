@@ -1,4 +1,6 @@
-# Third Claude review turn — specific approval requested
+# Third Claude review turn — superseded proposal
+
+The owner asked for a stronger proof before approving another paid turn. The [definitive live matrix](CLAUDE_WORKER_DEFINITIVE_MATRIX.md) supersedes this one-row proposal; this document remains as planning history.
 
 Two owner-approved read-only Claude review turns reached exact `claude-haiku-4-5-20251001` sessions and read the disposable fixture, but Gattini retained each as `interrupted` with no accepted result. The second turn's bounded diagnostic identified an unhandled `rate_limit_event`. The adapter now accepts only exact-session `allowed` and `allowed_warning` notices, and fails closed on `rejected`, unknown or malformed values. Full Node 24 and 26 offline suites pass 181/181. This repair has **not** been live verified. The original three-turn matrix's code and cancellation rows remain unused. This proposal asks for **one additional paid review turn**, beyond both prior review authorizations.
 

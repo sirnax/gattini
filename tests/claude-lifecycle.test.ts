@@ -12,7 +12,7 @@ import { JobStore } from "../src/daemon/store.js";
 const model = "claude-haiku-4-5-20251001";
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 
-function fixture(mode: "complete" | "hold" | "bad-model" = "complete") {
+function fixture(mode: "complete" | "hold" | "bad-model" | "rate-rejected" | "tool-error" = "complete") {
   const root = mkdtempSync(join(tmpdir(), "gattini-claude-lifecycle-"));
   const state = join(root, "state"), source = join(root, "source"), executable = join(root, "fake-claude");
   mkdirSync(state, { mode: 0o700 }); mkdirSync(source);
@@ -34,7 +34,12 @@ process.stdin.on('data', chunk => task += chunk);
 process.stdin.on('end', () => {
   const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
   emit({ type: 'system', subtype: 'init', session_id, model: ${JSON.stringify(mode)} === 'bad-model' ? 'wrong-model' : model, tools: ['Read', 'Glob', 'Grep'] });
+  emit({ type: 'rate_limit_event', session_id, rate_limit_info: { status: ${JSON.stringify(mode)} === 'rate-rejected' ? 'rejected' : 'allowed', rateLimitType: 'five_hour' } });
+  if (${JSON.stringify(mode)} === 'rate-rejected') return;
   if (${JSON.stringify(mode)} === 'hold') { setInterval(() => {}, 1000); return; }
+  emit({ type: 'assistant', session_id, message: { content: [{ type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: process.cwd() + '/code.txt' } }] } });
+  emit({ type: 'user', session_id, message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'old', is_error: ${JSON.stringify(mode)} === 'tool-error' }] } });
+  if (${JSON.stringify(mode)} === 'tool-error') return;
   const proposal = JSON.stringify({ path: 'code.txt', oldText: 'old', newText: 'new' });
   emit({ type: 'result', subtype: 'success', is_error: false, session_id,
     result: task.includes('Prepare one read-only code proposal') ? proposal : 'Offline Claude review.',
@@ -167,6 +172,37 @@ test("Claude cancellation is confirmed only for an identified exiting child; mis
       }
     } finally { await daemon?.close(); rmSync(f.root, { recursive: true, force: true }); }
   }
+});
+
+test("Claude rejected rate notice retains a bounded diagnostic without an accepted review", async () => {
+  const f = fixture("rate-rejected"); let daemon: RunningDaemon | undefined;
+  try {
+    daemon = await startDaemon(f.state);
+    const started = ok(await call(daemon.socketPath, "start", { role: "reviewer", task: "Review code.txt", idempotencyKey: "claude-rate-rejected" }));
+    const status = await waitFor(daemon.socketPath, started.jobId, "interrupted");
+    assert.equal(status.resolved.model, model);
+    assert.equal(ok(await call(daemon.socketPath, "result", { jobId: started.jobId })).result, null);
+    const db = new DatabaseSync(join(f.state, "jobs.sqlite"));
+    try {
+      const row = db.prepare("SELECT event_json FROM events WHERE job_id=? ORDER BY sequence DESC LIMIT 1").get(started.jobId) as { event_json: string } | undefined;
+      assert.deepEqual(JSON.parse(row!.event_json), { source: "claude", type: "diagnostic", code: "RATE_LIMITED", eventType: "rate_limit_event/none" });
+    } finally { db.close(); }
+  } finally { await daemon?.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Claude failed Read tool result never becomes an accepted review", async () => {
+  const f = fixture("tool-error"); let daemon: RunningDaemon | undefined;
+  try {
+    daemon = await startDaemon(f.state);
+    const started = ok(await call(daemon.socketPath, "start", { role: "reviewer", task: "Review code.txt", idempotencyKey: "claude-tool-error" }));
+    await waitFor(daemon.socketPath, started.jobId, "interrupted");
+    assert.equal(ok(await call(daemon.socketPath, "result", { jobId: started.jobId })).result, null);
+    const db = new DatabaseSync(join(f.state, "jobs.sqlite"));
+    try {
+      const row = db.prepare("SELECT event_json FROM events WHERE job_id=? ORDER BY sequence DESC LIMIT 1").get(started.jobId) as { event_json: string } | undefined;
+      assert.deepEqual(JSON.parse(row!.event_json), { source: "claude", type: "diagnostic", code: "PROTOCOL_ERROR", eventType: "user/none" });
+    } finally { db.close(); }
+  } finally { await daemon?.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test("restart does not replay a claimed Claude session or confirm its cancellation", async () => {
