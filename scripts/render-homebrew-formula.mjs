@@ -17,6 +17,7 @@ const [, releasePath, , archivePath, , suppliedUrl, , suppliedHomepage, , outPat
 for (const path of [releasePath, archivePath, outPath]) {
   if (!isAbsolute(path)) fail("All filesystem paths must be absolute");
 }
+if (basename(outPath) !== "gattini.rb") fail("Formula output filename must be gattini.rb");
 const release = JSON.parse(readFileSync(releasePath, "utf8"));
 if (release.name !== "gattini" || !/^\d+\.\d+\.\d+$/.test(release.version) ||
     release.archive !== `gattini-${release.version}.tgz` ||
@@ -55,6 +56,9 @@ if (homepage.protocol !== "https:" || homepage.username || homepage.password || 
 }
 
 const formula = `# Local preparation only. Audit, test, installation, and publication require separate validation.
+require "json"
+require "shellwords"
+
 class Gattini < Formula
   desc "Local-first durable AI coding job broker"
   homepage "${suppliedHomepage}"
@@ -88,8 +92,27 @@ class Gattini < Formula
   end
 
   test do
-    assert_match "Usage:", shell_output("#{bin}/gattini 2>&1", 2)
-    assert_predicate libexec/"dist/src/daemon/gattinid.js", :exist?
+    state = testpath/"state"
+    task = testpath/"task with spaces.txt"
+    task.write("Homebrew offline fake job\\n")
+    ENV["GATTINI_STATE_DIR"] = state.to_s
+    pid = spawn((bin/"gattinid").to_s, out: testpath/"daemon.log", err: testpath/"daemon.err")
+    begin
+      socket = state/"gattinid.sock"
+      100.times do
+        break if socket.exist?
+        sleep 0.1
+      end
+      assert_predicate socket, :exist?
+      output = shell_output("#{bin}/gattini run --task-file #{Shellwords.escape(task.to_s)} --idempotency-key brew-smoke --role code --json")
+      result = JSON.parse(output)
+      assert_equal "completed", result.fetch("state")
+      assert_equal "unverified", result.fetch("result").fetch("acceptance")
+      assert_predicate state/"jobs.sqlite", :exist?
+    ensure
+      Process.kill("TERM", pid)
+      Process.wait(pid)
+    end
   end
 end
 `;

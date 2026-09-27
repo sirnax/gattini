@@ -1,6 +1,6 @@
 # Install Gattini locally on macOS
 
-This guide describes the local `gattini` 0.1.0 package for Apple Silicon (macOS arm64). The package is a versioned npm tarball; it is not published to npm or Homebrew. You need Node.js 24 or newer and its bundled npm. Install Node yourself using a source you trust. Gattini does not install or authenticate OpenCode, Codex, Claude Code, or any provider.
+This guide describes the local `gattini` 0.2.0 package for Apple Silicon (macOS arm64). The package is a versioned npm tarball; it is not published to npm or Homebrew. You need Node.js 24 or newer and its bundled npm. Install Node yourself using a source you trust. Gattini does not install or authenticate OpenCode, Codex, Claude Code, or any provider.
 
 On the release builder's Apple Silicon Mac, from a Gattini source checkout with the locked development dependencies already installed, produce the tarball and checksum:
 
@@ -9,14 +9,24 @@ mkdir -p "$HOME/gattini-release"
 node scripts/package-local.mjs --out-dir "$HOME/gattini-release"
 ```
 
-For a fresh account, obtain `gattini-0.1.0.tgz` and its `.sha256` file from a trusted transfer, place both in `~/gattini-release`, then verify them before installing:
+For a fresh account, obtain `gattini-0.2.0.tgz` and its `.sha256` file from a trusted transfer, place both in `~/gattini-release`, then verify them before installing:
 
 ```sh
 cd "$HOME/gattini-release"
-shasum -a 256 -c gattini-0.1.0.tgz.sha256
+shasum -a 256 -c gattini-0.2.0.tgz.sha256
 ```
 
 The checksum detects accidental corruption when checked against a checksum obtained through a trusted channel; it does not authenticate a release by itself. The archive declares macOS arm64 and Node `>=24` and has no production npm dependencies. The local builder checks its exact locked TypeScript and Node type versions before compiling.
+
+## Current distribution paths
+
+| Component | Local artifact | Status |
+| --- | --- | --- |
+| CLI and daemon | `gattini-0.2.0.tgz` with checksum and `release.json` | Built byte-identically under Node 24 and 26 on Apple Silicon; disposable-prefix install tests passed. Not published. |
+| Homebrew formula | Generated `gattini.rb` bound to the exact tarball checksum | Local draft only. A real tap URL, named-formula audit, `brew test`, and isolated Homebrew install/upgrade/uninstall remain open. |
+| VS Code client | `extension/` source and compiled development host | Local extension-host and manual checks passed. No VSIX or Marketplace release has been prepared or installed into a normal profile. |
+
+The current package targets macOS arm64. Intel macOS, Linux and Windows builds have not been validated. The editor client requires the matching `0.2.0` daemon and protocol v2; it does not contain or start the daemon.
 
 ## Install
 
@@ -24,7 +34,7 @@ The examples use a user-owned npm prefix at `~/.local`, so installation does not
 
 ```sh
 mkdir -p "$HOME/.local"
-npm install --global --prefix "$HOME/.local" "$HOME/gattini-release/gattini-0.1.0.tgz"
+npm install --global --prefix "$HOME/.local" "$HOME/gattini-release/gattini-0.2.0.tgz"
 ```
 
 Add this line to `~/.zshrc` if needed, then open a new terminal:
