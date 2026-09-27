@@ -1,6 +1,6 @@
 # Tasks 16–18 preparation
 
-Status: historical preparation note, 27 September 2026. Checkpoint 6 subsequently approved local extension work, and Task 17 was implemented in protocol v2. See [`TASK17_18_LOCAL_EVIDENCE.md`](TASK17_18_LOCAL_EVIDENCE.md) for current local evidence and the remaining Task 18 manual check. The roadmap remains authoritative; this note records the earlier acceptance requirements and gaps, not current implementation status.
+Status: historical preparation note, 27 September 2026. Checkpoint 6 subsequently approved local extension work, and Task 17 was implemented in protocol v2. See [`TASK17_18_LOCAL_EVIDENCE.md`](TASK17_18_LOCAL_EVIDENCE.md) for current local evidence, including the completed Task 18 manual evidence check. The roadmap remains authoritative; this note records the earlier acceptance requirements and gaps, not current implementation status.
 
 ## Dependencies and scope
 
