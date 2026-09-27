@@ -1,6 +1,6 @@
 # Claude worker interface freeze
 
-Frozen on 27 September 2026 from read-only `claude --version` and `claude --help` on installed Claude Code 2.1.283. This is an offline implementation contract, not live Claude conformance.
+Frozen on 27 September 2026 from read-only `claude --version` and `claude --help` on installed Claude Code 2.1.283. The original freeze was offline; the later [approved live sign-off](CLAUDE_WORKER_SIGNOFF.md) establishes the declared single-turn review, guarded code and local cancellation boundary.
 
 ## Launch and identity
 

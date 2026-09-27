@@ -1,4 +1,4 @@
-# Claude worker sign-off test — prepared offline, live approval pending
+# Claude worker sign-off — approved live code and cancellation passed
 
 27 September 2026. This replaces the manual execution procedure in [the code recheck](CLAUDE_WORKER_CODE_RECHECK.md). It keeps its exact model, disposable input, two-turn ceiling and CLI usage thresholds. It does not repeat the already successful direct probe or durable reviewer.
 
@@ -40,4 +40,30 @@ The report's code/cancel `passed` result must be combined with the already retai
 
 Offline tests also require rejection of a different but syntactically valid replacement before apply, refusal to rerun existing state, actual exit of the signalled fixture child, and rejection of a turn that finishes before cancellation. A nested Node-test-runner environment initially caused the baseline child check to return success without executing the intended failing test; the offline scenario now runs in a normal subprocess with `NODE_TEST_CONTEXT` omitted. The deliberately failing baseline is asserted in both offline and live modes so this cannot produce a silent green result.
 
-The direct-edit gate remains disabled. Phase 5 integration remains gated. No new live Claude provider turn was performed while preparing this test.
+At preparation time, the direct-edit gate remained disabled, Phase 5 integration remained gated, and no new live Claude provider turn had been performed. The approved execution below records the subsequent result.
+
+## Approved live execution — 27 September 2026
+
+The owner explicitly approved this two-turn plan. On commit `d638919`, command `/opt/homebrew/opt/node@24/bin/node scripts/claude-signoff.mjs --approved-live` passed automatic approval review and exited **0** with `outcome: passed`. Preflight verified installed Claude **2.1.283**, Node **24.21.0**, exact fixture hashes and the existing first-party Max login. There were exactly two invocations, no retry or fallback.
+
+| Evidence | Observed value |
+| --- | --- |
+| Code job / attempt | `26aa3412-04e8-4d50-93d3-c6d7a970dc23` / `16add14a-3d6e-457e-b8e9-7dcd0d665dc8` |
+| Code session / model | `22b8a9fd-46d4-4d77-b826-7343101c6d01` / `claude-haiku-4-5-20251001` |
+| Launch / apply approval | `0f06990e-5fc8-46c4-8922-abcb64c97e44` / `804aeb4f-155b-48bd-be89-87371704d2d2`, both persisted `approved` |
+| Tool evidence | Matched successful `Glob` and `Read`; one successful read of owned `math.mjs`; no failed, unmatched or disallowed tools |
+| Code result | `completed`, `acceptance: passed`; only `math.mjs` changed from subtraction to addition; baseline exit 1, post-apply Node check exit 0 (1/1) |
+| Snapshot digest | `03ba5e34906f9832eb4ba67061837e4fda3ced93414323600d9829ce94dcd750` |
+| Domain-separated diff digest | `bc9b1af8b886d0f16bb086b1776e80acd1b80a205a6859cd5be2563772e6e4af` |
+| Snapshot artifact / raw diff SHA-256 | `a7706e6d96a36c1be027d8fbc738ff70a7fc5c64407921472644a8723e25420a` / `b4537e9fbc3926322fd6232b75556a6d679805bb7edb6c2814635ce18a469b51` |
+| Code usage | 26 input / 532 output tokens; CLI cost-equivalent estimate **USD 0.0082507** |
+| Cancel job / attempt | `3b89c0c5-bcfb-486b-8b50-45e8ae95abd8` / `de423f73-a4f2-445b-a8f8-0697d8895fd6` |
+| Cancel session | `5c61b9ea-6f12-42b5-869d-ecd7ee0b3142`, exact same pinned model/version |
+| Cancel process evidence | Owned PID `40547`, successful `SIGTERM` delivery, exit code **143**, `resultSeen: false`, `cancelRequested: true`, PID absent afterward |
+| Cancel result | `cancelled`, result null, no terminal usage; tokens and cost **unknown**, not zero |
+
+The code result and cancelled state/result remained identical after their daemon restarts. Both source snapshots, dirty tracked sentinels and untracked sentinels were preserved. Daemons were closed and the final socket was absent. The report's initial `code.state`, `cancel.state` and approval objects are submission/pre-decision snapshots; `code.result`, `code.approvals` and `cancel.status` contain the terminal evidence.
+
+Private report: `/private/tmp/gattini-claude-live.BxPN3R/signoff-report.json`, SHA-256 `7e63d15b5b77eb53cf37d20d5126d60d0bd2640210979b3fe1a9cc96fe9ee1ed`. Owned code transcript SHA-256 `2eb85f29b952223a85157d1cffe1a055aa3645b7e122cb6ec8b6ab0bab255542`; its exact path is retained in the private report. Old evidence remains intact. Known estimates across prior turns plus this code turn sum to **USD 0.0393008**, with the cancellation estimate unavailable; this is not an actual bill or a complete usage total.
+
+Combined with the earlier live direct probe and durable review, these results satisfy the declared Claude single-turn reviewer, guarded code and local cancellation boundary. Permission/error and uncertain-recovery cases also have offline conformance coverage. No claim is made for remote computation cancellation, host containment, backend identity attestation, automatic resumed sessions, reviewer follow-up, arbitrary models or direct edit. Post-live full-suite results are recorded in the roadmap. Phase 5 implementation was not started.

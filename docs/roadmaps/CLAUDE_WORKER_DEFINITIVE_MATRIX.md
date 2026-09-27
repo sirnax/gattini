@@ -31,3 +31,7 @@ Preflight found clean `main`, exact fixture/task/check hashes and base SHA, Clau
 - **Row 4 was not run** under the approved stop rule. The three new local CLI cost-equivalent estimates total **USD 0.0206045**; together with the two earlier review estimates they total **USD 0.0310501**. These are not observed charges. The USD 0.05 code threshold was above the observed estimate and was not the cause of row 3's failure.
 
 Offline after the stop, the Claude code branch now removes only one complete outer `json` fence before the existing strict proposal and snapshot validation. Prose outside that fence remains invalid and gains a bounded `PROPOSAL_INVALID` diagnostic; fake-CLI tests passed. This repair has **not** been live verified. The [code-and-cancel continuation](CLAUDE_WORKER_CODE_RECHECK.md) requires fresh owner approval because the matrix allowed only one code turn and stopped before cancellation. Claude worker conformance remains open.
+
+## Subsequent approved continuation
+
+The owner separately approved the executable two-turn [sign-off](CLAUDE_WORKER_SIGNOFF.md) on 27 September 2026. Guarded code and exact local cancellation both passed; that document retains exact identities, two approved gates, snapshot and process-exit evidence. Combined with rows 1–2 above, the declared Claude worker live boundary is now demonstrated. The earlier failure and stop remain part of the evidence history.
