@@ -426,6 +426,16 @@ export class JobStore {
     });
   }
 
+  recordClaudeDiagnostic(jobId: string, attemptId: string, diagnostic: { code: string; eventType: string }): void {
+    this.transaction(() => {
+      this.assertAttempt(jobId, attemptId);
+      const safe = (value: string): string => /^[a-zA-Z_]+(?:\/[a-zA-Z_]+)?$/.test(value) && value.length <= 100 ? value : "other";
+      const next = this.db.prepare("SELECT coalesce(max(sequence),0)+1 AS sequence FROM events WHERE job_id=?").get(jobId) as { sequence: number };
+      this.db.prepare("INSERT INTO events (job_id,sequence,event_json,attempt_id) VALUES (?,?,?,?)")
+        .run(jobId, next.sequence, JSON.stringify({ source: "claude", type: "diagnostic", code: safe(diagnostic.code), eventType: safe(diagnostic.eventType) }), attemptId);
+    });
+  }
+
   completeClaudeReview(jobId: string, attemptId: string,
     identity: { sessionId: string; model: string; runtimeVersion: string; executable: string; cwd: string },
     summary: string, usage: { inputTokens: number | null; outputTokens: number | null; costUsd: number | null }): void {

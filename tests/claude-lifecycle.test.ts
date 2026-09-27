@@ -5,6 +5,7 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { startDaemon, type RunningDaemon } from "../src/daemon/server.js";
 import { JobStore } from "../src/daemon/store.js";
 
@@ -158,6 +159,11 @@ test("Claude cancellation is confirmed only for an identified exiting child; mis
       } else {
         await waitFor(daemon.socketPath, started.jobId, "interrupted");
         assert.equal(ok(await call(daemon.socketPath, "result", { jobId: started.jobId })).result, null);
+        const db = new DatabaseSync(join(f.state, "jobs.sqlite"));
+        try {
+          const row = db.prepare("SELECT event_json FROM events WHERE job_id=? ORDER BY sequence DESC LIMIT 1").get(started.jobId) as { event_json: string } | undefined;
+          assert.deepEqual(JSON.parse(row!.event_json), { source: "claude", type: "diagnostic", code: "PROTOCOL_ERROR", eventType: "system/init" });
+        } finally { db.close(); }
       }
     } finally { await daemon?.close(); rmSync(f.root, { recursive: true, force: true }); }
   }

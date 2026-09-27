@@ -340,6 +340,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
             store.recordClaudeIdentity(jobId, attemptId!, identity);
             if (store.cancellationNeeded(jobId)) scheduleClaudeCancellation(jobId, identity.sessionId);
           },
+          onDiagnostic: diagnostic => store.recordClaudeDiagnostic(jobId, attemptId!, diagnostic),
         });
         claudeHandles.set(jobId, handle);
         const result = await handle.result;
@@ -503,6 +504,7 @@ export async function startDaemon(directory = stateDirectory()): Promise<Running
               store.recordClaudeIdentity(jobId, attemptId!, identity);
               if (store.cancellationNeeded(jobId)) scheduleClaudeCancellation(jobId, identity.sessionId);
             },
+            onDiagnostic: diagnostic => store.recordClaudeDiagnostic(jobId, attemptId!, diagnostic),
           });
           claudeHandles.set(jobId, handle);
           const result = await handle.result;

@@ -31,6 +31,8 @@ process.stdin.on('end', () => {
   event(init);
   if (task === 'hang') { setInterval(() => {}, 1000); return; }
   if (task === 'malformed') { process.stdout.write('{broken\\n'); return; }
+  if (task === 'unknown-event') { event({ type: 'rate_limit_event', session_id }); return; }
+  if (task === 'budget') { result.is_error = true; result.subtype = 'error_max_budget_usd'; }
   if (task === 'oversize') { event({ type: 'assistant', session_id, message: { content: [{ type: 'text', text: 'x'.repeat(1100000) }] } }); return; }
   if (task === 'permission') { result.is_error = true; result.subtype = 'error_during_execution'; }
   if (task === 'changed-session') result.session_id = '00000000-0000-0000-0000-000000000000';
@@ -105,4 +107,13 @@ test("cancellation without identity and timeout stay unconfirmed", async () => f
   assert.deepEqual(await missing.interrupt(), { confirmed: false, sessionId: null });
   const timed = startClaudeTurn({ ...base, task: "hang" }, { timeoutMs: 100 });
   await assert.rejects(timed.result, errorCode("TIMEOUT"));
+}));
+
+test("failure diagnostics retain only bounded event type metadata", async () => fixture(async base => {
+  for (const [task, eventType] of [["unknown-event", "rate_limit_event/none"], ["budget", "result/error_max_budget_usd"]] as const) {
+    const diagnostics: Array<{ code: string; eventType: string }> = [];
+    await assert.rejects(startClaudeTurn({ ...base, task }, { onDiagnostic: value => diagnostics.push(value) }).result,
+      errorCode("PROTOCOL_ERROR"));
+    assert.deepEqual(diagnostics, [{ code: "PROTOCOL_ERROR", eventType }]);
+  }
 }));
