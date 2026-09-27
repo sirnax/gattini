@@ -10,6 +10,7 @@ import { WorktreeManager } from "../environments/worktree.js";
 import { OpenCodeUsageAccumulator } from "../core/usage.js";
 import { parseCodexRoleConfig, type CodexRoleConfig } from "../core/codex-role-config.js";
 import { parseWorkerCodeRoleConfig } from "../core/code-policy.js";
+import { parseClaudeRoleConfig, type ClaudeRoleConfig } from "../core/claude-role-config.js";
 
 type State = "queued" | "awaiting-approval" | "running" | "cancelling" | "cancelled" | "completed" | "failed" | "interrupted";
 type JobRow = { id: string; idempotency_key: string; input_digest: string; state: State; created_at: string; updated_at: string; result_json: string | null; runtime_session_id: string | null; resolved_json: string | null; scope_key: string | null; config_json: string; job_json: string };
@@ -19,15 +20,18 @@ type CodeRow = { job_id: string; input_json: string; worktree_path: string | nul
 function savedCodeConfig(value: unknown): CodeRoleConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Saved code role config is invalid");
   const saved = value as Record<string, unknown>;
-  if (saved.runtime !== "opencode-code" && saved.runtime !== "codex-code") throw new Error("Saved code runtime is unsupported");
-  return parseWorkerCodeRoleConfig({ ...saved, runtime: saved.runtime === "opencode-code" ? "opencode" : "codex" });
+  if (!["opencode-code", "codex-code", "claude-code"].includes(saved.runtime as string)) throw new Error("Saved code runtime is unsupported");
+  return parseWorkerCodeRoleConfig({ ...saved, runtime: (saved.runtime as string).replace(/-code$/, "") });
 }
 
 function codeActionProfile(config: CodeRoleConfig): Record<string, unknown> {
   return config.runtime === "opencode"
     ? { agent: config.agent, model: config.model, serverUrl: config.serverUrl, policy: "opencode-v2.0.18-deny-all-read-glob-grep" }
-    : { runtime: "codex", model: config.model, modelProvider: config.modelProvider,
-        executable: config.executable, policy: "codex-0.157.1-read-only-app-server" };
+    : config.runtime === "codex"
+      ? { runtime: "codex", model: config.model, modelProvider: config.modelProvider,
+          executable: config.executable, policy: "codex-0.157.1-read-only-app-server" }
+      : { runtime: "claude", model: config.model, executable: config.executable,
+          maxBudgetUsd: config.maxBudgetUsd, policy: "claude-2.1.283-restricted-read-only-cli" };
 }
 
 export class JobStore {
@@ -364,6 +368,84 @@ export class JobStore {
     });
   }
 
+  enqueueClaudeReview(input: { task: string; idempotencyKey: string; config: ClaudeRoleConfig;
+    pinnedSource?: { jobId: string; attemptId: string; snapshotSha: string; diffSha256: string } }): { jobId: string; state: State; deduplicated: boolean } {
+    const config = parseClaudeRoleConfig(input.config) as ClaudeRoleConfig;
+    const digest = createHash("sha256").update(JSON.stringify({ task: input.task, role: "reviewer", config,
+      ...(input.pinnedSource ? { pinnedSource: input.pinnedSource } : {}) })).digest("hex");
+    const existing = this.db.prepare("SELECT * FROM jobs WHERE idempotency_key=?").get(input.idempotencyKey) as JobRow | undefined;
+    if (existing) {
+      if (existing.input_digest !== digest) throw new ProtocolError("IDEMPOTENCY_CONFLICT", "Idempotency key belongs to a different request");
+      return { jobId: existing.id, state: existing.state, deduplicated: true };
+    }
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const job = parseJob({ schemaVersion: 1, id, parentWorkflowId: null, role: "reviewer", task: input.task,
+      acceptanceCriteria: [], capabilities: ["headless", "explicit-session", "event-stream", "cancellation", "permission-enforcement"],
+      inputReferences: [], repository: null, allowedScope: [], verificationCommands: [],
+      limits: { timeoutSeconds: 60, maxEvents: 1000 }, approvalPolicy: "none" });
+    let scope: string;
+    try { scope = realpathSync(config.directory); }
+    catch { throw new ProtocolError("INVALID_REQUEST", "Claude review directory is unavailable"); }
+    const conflicts = this.db.prepare("SELECT scope_key FROM jobs WHERE scope_key IS NOT NULL AND state IN ('queued','awaiting-approval','running','cancelling','interrupted')").all() as Array<{ scope_key: string }>;
+    if (conflicts.some(row => {
+      try { return realpathSync(row.scope_key) === scope; }
+      catch { return row.scope_key === scope; }
+    })) throw new ProtocolError("SCOPE_BLOCKED", "A job in this directory is active or needs reconciliation");
+    this.db.prepare("INSERT INTO jobs (id,idempotency_key,input_digest,state,job_json,config_json,created_at,updated_at,scope_key) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(id, input.idempotencyKey, digest, "queued", JSON.stringify(job), JSON.stringify(config), now, now, scope);
+    if (input.pinnedSource) this.db.prepare("INSERT INTO pinned_reviews VALUES (?,?,?,?,?)")
+      .run(id, input.pinnedSource.jobId, input.pinnedSource.attemptId, input.pinnedSource.snapshotSha, input.pinnedSource.diffSha256);
+    return { jobId: id, state: "queued", deduplicated: false };
+  }
+
+  pendingClaudeReviews(): Array<{ jobId: string; task: string; config: ClaudeRoleConfig }> {
+    const rows = this.db.prepare("SELECT id,job_json,config_json FROM jobs WHERE state='queued' AND json_extract(config_json,'$.runtime')='claude' AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.job_id=jobs.id)").all() as Array<{ id: string; job_json: string; config_json: string }>;
+    return rows.map(row => ({ jobId: row.id, task: parseJob(JSON.parse(row.job_json)).task,
+      config: parseClaudeRoleConfig(JSON.parse(row.config_json)) as ClaudeRoleConfig }));
+  }
+
+  recordClaudeIdentity(jobId: string, attemptId: string, identity: { sessionId: string; model: string; runtimeVersion: string; executable: string; cwd: string }): void {
+    this.transaction(() => {
+      this.assertAttempt(jobId, attemptId);
+      const row = this.rowById(jobId);
+      const saved = JSON.parse(row.config_json) as { runtime?: string };
+      const code = saved.runtime === "claude-code";
+      const config = code ? savedCodeConfig(saved) : parseClaudeRoleConfig(saved) as ClaudeRoleConfig;
+      const cwd = code ? (this.db.prepare("SELECT worktree_path FROM code_jobs WHERE job_id=?").get(jobId) as { worktree_path: string } | undefined)?.worktree_path :
+        (config as ClaudeRoleConfig).directory;
+      if (config.runtime !== "claude" || !["running", "cancelling"].includes(row.state) || row.runtime_session_id ||
+          identity.model !== config.model || identity.executable !== config.executable || identity.cwd !== cwd ||
+          identity.runtimeVersion !== "2.1.283 (Claude Code)" || !/^[0-9a-f-]{36}$/.test(identity.sessionId)) {
+        throw new Error("Claude runtime identity does not match the claimed job");
+      }
+      this.db.prepare("UPDATE jobs SET runtime_session_id=?,resolved_json=?,updated_at=? WHERE id=?")
+        .run(identity.sessionId, JSON.stringify(identity), new Date().toISOString(), jobId);
+      this.db.prepare("UPDATE attempts SET runtime_session_id=?,phase=? WHERE id=?")
+        .run(identity.sessionId, row.state === "cancelling" ? "cancelling" : "running", attemptId);
+    });
+  }
+
+  completeClaudeReview(jobId: string, attemptId: string,
+    identity: { sessionId: string; model: string; runtimeVersion: string; executable: string; cwd: string },
+    summary: string, usage: { inputTokens: number | null; outputTokens: number | null; costUsd: number | null }): void {
+    this.assertAttempt(jobId, attemptId);
+    const row = this.rowById(jobId);
+    if (row.state !== "running" || row.runtime_session_id !== identity.sessionId || row.resolved_json !== JSON.stringify(identity)) {
+      throw new Error("Claude result identity or state differs from the claimed turn");
+    }
+    const result = parseRuntimeResult({ schemaVersion: 1, jobId, execution: "completed", acceptance: "unverified",
+      summary: summary || "Claude read-only turn completed without final text.", changedFiles: [], verification: [],
+      limitations: ["Claude read-only tool policy is not host containment; output has no independent acceptance checks."],
+      usage: { runtime: "claude", sessionId: identity.sessionId, ...usage } });
+    this.transaction(() => {
+      this.db.prepare("UPDATE jobs SET state='completed',result_json=?,updated_at=? WHERE id=?")
+        .run(JSON.stringify(result), new Date().toISOString(), jobId);
+      this.db.prepare("UPDATE attempts SET phase='completed' WHERE id=?").run(attemptId);
+      this.recordTurnResult(jobId, attemptId, result);
+    });
+  }
+
   sourceSnapshotForReview(jobId: string): { attemptId: string; snapshot: SnapshotEvidence } {
     const row = this.rowById(jobId);
     if (row.state !== "completed" || !this.db.prepare("SELECT 1 FROM code_jobs WHERE job_id = ?").get(jobId)) {
@@ -411,7 +493,7 @@ export class JobStore {
       limits: { timeoutSeconds: 300, maxEvents: 1000 }, approvalPolicy: "manual" });
     this.transaction(() => {
       this.db.prepare("INSERT INTO jobs (id,idempotency_key,input_digest,state,job_json,config_json,created_at,updated_at,scope_key) VALUES (?,?,?,?,?,?,?,?,?)")
-        .run(id, input.idempotencyKey, digest, "awaiting-approval", JSON.stringify(job), JSON.stringify({ ...config, runtime: config.runtime === "codex" ? "codex-code" : "opencode-code" }), now, now, input.repositoryPath);
+        .run(id, input.idempotencyKey, digest, "awaiting-approval", JSON.stringify(job), JSON.stringify({ ...config, runtime: `${config.runtime}-code` }), now, now, input.repositoryPath);
       this.db.prepare("INSERT INTO code_jobs (job_id,input_json,state) VALUES (?,?,?)").run(id, JSON.stringify(normalized), "preparing");
     });
     let worktreePath: string;
@@ -655,7 +737,7 @@ export class JobStore {
 
   completeProposal(jobId: string, attemptId: string, sessionId: string, proposal: string, worktreeSha: string,
     patch: { path: string; beforeSha256: string; afterSha256: string },
-    codexUsage?: { inputTokens: number | null; outputTokens: number | null }): string {
+    workerUsage?: { inputTokens: number | null; outputTokens: number | null; costUsd?: number | null }): string {
     this.assertAttempt(jobId, attemptId);
     return this.transaction(() => {
       const row = this.rowById(jobId);
@@ -674,11 +756,11 @@ export class JobStore {
       this.db.prepare("INSERT INTO approvals (id,job_id,action_json,action_digest,state,created_at,expires_at) VALUES (?,?,?,?,?,?,?)")
         .run(approvalId, jobId, JSON.stringify(action), createHash("sha256").update(JSON.stringify(action)).digest("hex"), "pending", now, new Date(Date.now() + 15 * 60_000).toISOString());
       this.db.prepare("UPDATE attempts SET phase = 'proposed' WHERE id = ?").run(attemptId);
-      if (config.runtime === "codex") {
+      if (config.runtime === "codex" || config.runtime === "claude") {
         const identity = row.resolved_json ? JSON.parse(row.resolved_json) as Record<string, unknown> : null;
-        if (!identity || identity.threadId !== sessionId || !identity.sessionId || !codexUsage) throw new Error("Codex proposal identity or usage is missing");
+        if (!identity || (config.runtime === "codex" ? identity.threadId : identity.sessionId) !== sessionId || !workerUsage) throw new Error("Worker proposal identity or usage is missing");
         this.db.prepare("UPDATE jobs SET resolved_json = ? WHERE id = ?")
-          .run(JSON.stringify({ ...identity, usage: codexUsage }), jobId);
+          .run(JSON.stringify({ ...identity, usage: workerUsage }), jobId);
       }
       this.db.prepare("UPDATE jobs SET state = 'awaiting-approval', updated_at = ? WHERE id = ?").run(now, jobId);
       return approvalId;
@@ -822,12 +904,20 @@ export class JobStore {
     const codexResolved = config.runtime === "codex" && row.resolved_json
       ? JSON.parse(row.resolved_json) as { sessionId?: string; model?: string; modelProvider?: string; cliVersion?: string; usage?: { inputTokens: number | null; outputTokens: number | null } }
       : null;
+    const claudeResolved = config.runtime === "claude" && row.resolved_json
+      ? JSON.parse(row.resolved_json) as { sessionId?: string; model?: string; runtimeVersion?: string; usage?: { inputTokens: number | null; outputTokens: number | null; costUsd: number | null } }
+      : null;
     if (config.runtime === "codex" && (!codexResolved?.sessionId || codexResolved.model !== config.model || codexResolved.modelProvider !== config.modelProvider || !codexResolved.usage)) {
       throw new Error("Codex proposal result lost exact identity or usage");
+    }
+    if (config.runtime === "claude" && (claudeResolved?.sessionId !== sessionId || claudeResolved.model !== config.model || !claudeResolved.usage)) {
+      throw new Error("Claude proposal result lost exact identity or usage");
     }
     const usage = codexResolved?.sessionId && codexResolved.usage
       ? { runtime: "codex" as const, sessionId: codexResolved.sessionId, costUsd: null,
           inputTokens: codexResolved.usage.inputTokens, outputTokens: codexResolved.usage.outputTokens }
+      : claudeResolved?.sessionId && claudeResolved.usage
+        ? { runtime: "claude" as const, sessionId: claudeResolved.sessionId, ...claudeResolved.usage }
       : this.usageForAttempt(attemptId, sessionId);
     const result = parseRuntimeResult({ schemaVersion: 1, jobId, execution: "completed", acceptance: snapshot.acceptance,
       summary, changedFiles: snapshot.changedFiles,
@@ -836,7 +926,7 @@ export class JobStore {
       usage });
     this.transaction(() => {
       this.db.prepare("UPDATE jobs SET state = 'completed', result_json = ?, resolved_json = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(result), config.runtime === "codex" ? row.resolved_json : JSON.stringify(resolved), new Date().toISOString(), jobId);
+        .run(JSON.stringify(result), config.runtime === "codex" || config.runtime === "claude" ? row.resolved_json : JSON.stringify(resolved), new Date().toISOString(), jobId);
       this.db.prepare("UPDATE attempts SET phase = 'completed' WHERE id = ?").run(attemptId);
       this.recordTurnResult(jobId, attemptId, result);
     });
@@ -857,7 +947,7 @@ export class JobStore {
   failCodePreflight(jobId: string): void {
     const result = parseRuntimeResult({ schemaVersion: 1, jobId, execution: "failed", acceptance: "unverified",
       summary: "Coding runtime policy or configuration preflight failed.", changedFiles: [], verification: [],
-      limitations: ["No coding runtime launch was claimed; inspect configured OpenCode permissions before retrying with a new job."] });
+      limitations: ["No coding runtime launch was claimed; inspect the configured worker policy before retrying with a new job."] });
     this.db.prepare("UPDATE jobs SET state = 'failed', result_json = ?, updated_at = ? WHERE id = ? AND state = 'queued' AND NOT EXISTS (SELECT 1 FROM attempts WHERE job_id = ?)")
       .run(JSON.stringify(result), new Date().toISOString(), jobId, jobId);
   }
@@ -901,6 +991,26 @@ export class JobStore {
     }
     const result = parseRuntimeResult({ schemaVersion: 1, jobId, execution: "failed", acceptance: "unverified",
       summary: "Codex worker preflight did not complete.", changedFiles: [], verification: [], limitations: ["No Codex runtime turn was claimed."] });
+    this.db.prepare("UPDATE jobs SET state='failed',result_json=?,updated_at=? WHERE id=? AND state='queued'")
+      .run(JSON.stringify(result), now, jobId);
+  }
+
+  failClaudeReview(jobId: string, attemptId?: string): void {
+    if (attemptId) this.assertAttempt(jobId, attemptId);
+    const row = this.rowById(jobId);
+    if (!["queued", "running", "cancelling"].includes(row.state)) return;
+    if (row.state === "cancelling" && row.runtime_session_id) return;
+    const now = new Date().toISOString();
+    if (attemptId) {
+      this.transaction(() => {
+        this.db.prepare("UPDATE jobs SET state='interrupted',updated_at=? WHERE id=?").run(now, jobId);
+        this.db.prepare("UPDATE attempts SET phase='uncertain' WHERE id=?").run(attemptId);
+      });
+      return;
+    }
+    const result = parseRuntimeResult({ schemaVersion: 1, jobId, execution: "failed", acceptance: "unverified",
+      summary: "Claude worker preflight did not complete.", changedFiles: [], verification: [],
+      limitations: ["No Claude runtime turn was claimed."] });
     this.db.prepare("UPDATE jobs SET state='failed',result_json=?,updated_at=? WHERE id=? AND state='queued'")
       .run(JSON.stringify(result), now, jobId);
   }

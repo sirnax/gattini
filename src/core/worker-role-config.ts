@@ -1,8 +1,9 @@
 import { parseCodexRoleConfig, type CodexRoleConfig } from "./codex-role-config.js";
 import { parseRoleConfig, type ReviewerRoleConfig } from "./role-config.js";
+import { parseClaudeRoleConfig, type ClaudeRoleConfig } from "./claude-role-config.js";
 
 /** The same caller role may select either installed worker through private state. */
-export type WorkerReviewerConfig = ReviewerRoleConfig | CodexRoleConfig;
+export type WorkerReviewerConfig = ReviewerRoleConfig | CodexRoleConfig | ClaudeRoleConfig;
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -20,5 +21,6 @@ export function parseWorkerReviewerConfig(value: unknown): WorkerReviewerConfig 
     }
     return parseCodexRoleConfig({ schemaVersion: 1, ...value.roles.reviewer });
   }
+  if (value.roles.reviewer.runtime === "claude") return parseClaudeRoleConfig(value.roles.reviewer) as ClaudeRoleConfig;
   throw new TypeError("Unsupported reviewer runtime");
 }

@@ -1,6 +1,6 @@
 /** Usage observed from one exact OpenCode session. Values are runtime reported. */
 export interface UsageProvenance {
-  runtime: "opencode" | "codex";
+  runtime: "opencode" | "codex" | "claude";
   sessionId: string;
   costUsd: number | null;
   inputTokens: number | null;

@@ -1,6 +1,7 @@
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import type { CodeRoleConfig, CodexCodeRoleConfig, OpenCodeCodeRoleConfig } from "./coding.js";
+import { parseClaudeRoleConfig } from "./claude-role-config.js";
 
 export class CodePolicyError extends Error {
   constructor(message: string) { super(message); this.name = "CodePolicyError"; }
@@ -47,6 +48,7 @@ export function parseCodeRoleConfig(value: unknown): OpenCodeCodeRoleConfig {
 export function parseWorkerCodeRoleConfig(value: unknown): CodeRoleConfig {
   if (!isRecord(value)) throw new CodePolicyError("Code role config must be an object");
   if (value.runtime === "opencode") return parseCodeRoleConfig(value);
+  if (value.runtime === "claude") return parseClaudeRoleConfig(value, true) as Extract<CodeRoleConfig, { runtime: "claude" }>;
   exactKeys(value, ["runtime", "model", "modelProvider", "executable"], "Codex code role config");
   if (value.runtime !== "codex") throw new CodePolicyError("Unsupported code role runtime");
   nonEmpty(value.model, "Codex code model", 256);

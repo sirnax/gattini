@@ -29,7 +29,7 @@ export interface CodexCodeRoleConfig {
   executable: string;
 }
 
-export type CodeRoleConfig = OpenCodeCodeRoleConfig | CodexCodeRoleConfig;
+export type CodeRoleConfig = OpenCodeCodeRoleConfig | CodexCodeRoleConfig | import("./claude-role-config.js").ClaudeCodeRoleConfig;
 
 export interface VerificationCheckResult {
   argv: string[];
