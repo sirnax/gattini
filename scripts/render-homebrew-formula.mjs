@@ -55,7 +55,7 @@ if (homepage.protocol !== "https:" || homepage.username || homepage.password || 
   fail("Homepage must be an HTTPS URL without credentials, query, fragment, or Ruby syntax");
 }
 
-const formula = `# Local formula template. Replace the test URL and homepage before publication.
+const formula = `# Generated from a checksum-verified Gattini release archive.
 require "json"
 require "shellwords"
 

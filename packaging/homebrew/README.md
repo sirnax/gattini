@@ -22,3 +22,15 @@ The [Task 16 local validation record](../../docs/roadmaps/TASK16_LOCAL_VALIDATIO
 The [normal Homebrew test record](../../docs/roadmaps/TASK16_NORMAL_HOMEBREW_TEST.md) gives the actual development-Mac result, checks and side effects. For the owner's separate Apple Silicon Mac, the [other-Mac field-test record](../../docs/roadmaps/TASK16_OTHER_MAC_HOMEBREW_TEST.md) identifies a checked ZIP and the same one-command test. No other-Mac result has been claimed.
 
 Formula syntax and service behavior follow the official [Homebrew Formula Cookbook](https://docs.brew.sh/Formula-Cookbook) and [Node formula guidance](https://docs.brew.sh/Language-Specific-Formulae).
+
+## Release procedure
+
+The release owner uses the verified macOS arm64 archive and `release.json` from `scripts/package-local.mjs`. The generated formula must contain the exact release-asset HTTPS URL and SHA-256, and the tap repository must be named `homebrew-gattini` for the qualified install name `sirnax/gattini/gattini`. For each version:
+
+1. Run the Node 24 and 26 offline gates, build the archive, verify its checksum, and compare the builds byte for byte.
+2. Render `Formula/gattini.rb` with `scripts/render-homebrew-formula.mjs`, pointing to the versioned GitHub release asset. Run `ruby -c` and a named `brew audit --strict` in a temporary tap.
+3. Push the tap commit and tag. Upload the archive, `.sha256`, and `release.json` as a draft GitHub release. Download them back and verify the checksum and archive bytes.
+4. Publish the release and tap only after reviewing their contents and visibility. Check the asset URL without authentication, then test a fresh qualified `brew install --formula`, `brew test`, and `brew uninstall --formula` using a disposable location.
+5. Record the public commit, tag, archive hash, install output, cleanup and any remaining fresh-machine limits in the roadmap. Never start `brew services` as part of the formula install test.
+
+The [Homebrew tap guidance](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap) explains the `homebrew-` repository name and one-command qualified install. The tap is a separate repository from the private Gattini development source.
