@@ -1,6 +1,6 @@
 # Gattini — implementation roadmap
 
-Status: Tasks 1–15 complete within documented limits; Checkpoint 6 was approved for local extension development on 27 September 2026; Checkpoint 5 and Gate B were accepted on 27 September 2026. The owner-prioritized Claude worker milestone passed its approved live direct probe, durable review, guarded code/two approvals/snapshot and local child cancellation on Claude Code 2.1.283 with pinned Haiku. Phase 5 Task 15 has local packaging and disposable-prefix evidence; a genuine fresh-account installation remains untested. Checkpoint 4 was accepted on 26 September 2026, Checkpoint 3 on 26 September 2026, Checkpoint 2 on 25 September 2026, and Checkpoint 1 on 24 September 2026. Companion specification: `GATTINI_MASTER_PLAN.md`. Build on Nate's Mac using Codex or Claude Code. These Gattini files are the authoritative plan/task targets; do not maintain duplicate checklists in `tasks/plan.md` or `tasks/todo.md`.
+Status: Tasks 1–18 complete within documented limits; Checkpoint 7 remains open. Checkpoint 6 was approved for local extension development on 27 September 2026; Checkpoint 5 and Gate B were accepted on 27 September 2026. The owner-prioritized Claude worker milestone passed its approved live direct probe, durable review, guarded code/two approvals/snapshot and local child cancellation on Claude Code 2.1.283 with pinned Haiku. Phase 5 Task 15 has local packaging and disposable-prefix evidence; a genuine fresh-account installation remains untested. Checkpoint 4 was accepted on 26 September 2026, Checkpoint 3 on 26 September 2026, Checkpoint 2 on 25 September 2026, and Checkpoint 1 on 24 September 2026. Companion specification: `GATTINI_MASTER_PLAN.md`. Build on Nate's Mac using Codex or Claude Code. These Gattini files are the authoritative plan/task targets; do not maintain duplicate checklists in `tasks/plan.md` or `tasks/todo.md`.
 
 ## How to execute
 
@@ -248,7 +248,7 @@ Checkpoint 5 and Gate B were explicitly accepted by the owner on **27 September 
 
 Platform order confirmed by the owner on 28 September 2026: **macOS ARM first, Debian/Ubuntu Linux next, Windows later**. Task 16's Homebrew tap is specifically the macOS distribution path. Linux needs its own architecture-labelled archive and Linux runtime checks; Windows needs a separate transport, path, package and test design before support can be claimed. Platform targeting itself does not authorise publication, installation into the normal account, startup services or paid provider tests. The owner later expressly authorised one Gattini formula install, offline test and uninstall in this development Mac's normal Homebrew; that test is recorded below.
 
-### [ ] Task 16 — Homebrew tap for `gattini`
+### [x] Task 16 — Homebrew tap for `gattini`
 
 - Deliver: formula and release workflow after owner/name/publication approval.
 - Acceptance: formula installs the exact intended release with checksums; dependencies and platform support are accurate; no implicit provider installation/login or destructive data cleanup.
@@ -272,6 +272,8 @@ Tap staging, 28 September 2026: after the owner's request to push and enable dir
 
 Public tap continuation, 28 September 2026: the owner made `sirnax/gattini` public and reported that an iMac's qualified `brew install` reached the formula but got HTTP 404 for the private draft archive. Following the owner's instruction to finish public setup, the tap and release became public. The source repository's annotated `v0.2.0` tag at `fd0335d` rebuilt the downloaded archive byte for byte; its public release contains the archive, checksum and metadata. The tap formula was changed to that canonical source release URL, passed syntax and strict audit, and was pushed as `412f2af`. An unauthenticated archive download matched SHA-256 `97ab34442ff72130333945ff177ff82a82c78a469da050ff1f818d0cc027e06f`. A disposable Homebrew prefix successfully auto-tapped the public repo, fetched the archive, installed the formula, passed `brew test`, uninstalled it and untapped. That isolated test used `--ignore-dependencies` because Node 24 was copied into its custom prefix; the earlier normal-prefix test used ordinary dependency resolution. The owner later supplied an iMac install log confirming both; its offline fake-job and uninstall checks remain pending, so Task 16 remains open. See [public tap evidence](TASK16_TAP_PUBLICATION.md).
 
+Other-Mac lifecycle continuation, 28 September 2026: the owner-supplied iMac transcript confirms the public `sirnax/gattini/gattini` 0.2.0 formula installed with a freshly downloaded Node 24.21.0 dependency and an OpenSSL upgrade. With the owner-started Homebrew service running, `gattini run --task-file /tmp/gattini-smoke.txt --idempotency-key imac-brew-smoke-20260928 --json` completed fake job `f2cde7fe-b1ee-4ccd-a745-8ba76bac60f2` with `execution:completed` and `acceptance:unverified`. `brew test sirnax/gattini/gattini` invoked the formula test without a reported error; the transcript lacks per-command exit codes. `brew services stop sirnax/gattini/gattini` reported success, and `brew uninstall --formula sirnax/gattini/gattini` removed the 78-file formula and automatically removed now-unneeded Node 24. The public release SHA-256, strict audit, captured successful local formula tests, isolated `0.1.0` → `0.2.0` upgrade rehearsal, normal-prefix development-Mac lifecycle and this second-Mac result together satisfy Task 16 within documented limits. The iMac test did not cover daemon restart, event replay, a new macOS account, a real historical release upgrade, or an explicit post-uninstall state check. The tap and durable state may remain. Checkpoint 7 still needs human review and its separate CLI/editor and fresh-account criteria. See [Task 16 public tap evidence](TASK16_TAP_PUBLICATION.md).
+
 ### [x] Task 17 — VS Code submit/status client
 
 - Deliver: thin extension to submit a task and display durable job status/events.
@@ -294,7 +296,7 @@ Task 18 local implementation, 27–28 September 2026: protocol v2 `evidence.read
 
 - [ ] CLI and editor operate on the same durable jobs; both show evidence and approval state correctly.
 - [ ] Install and recovery guides are usable from a fresh Mac account.
-- [x] Task 16 local validation is evidenced and the tap and 0.2.0 archive are public; the separate-Mac installation passed; its job and uninstall checks remain pending under Task 16.
+- [x] Task 16 local validation is evidenced and the tap and 0.2.0 archive are public; the owner-supplied iMac transcript covers install, offline fake job, formula test, service stop and uninstall within the recorded limits.
 - [ ] Human approves the release and chooses the next capability milestone.
 
 ## Later milestones — plan separately before implementation

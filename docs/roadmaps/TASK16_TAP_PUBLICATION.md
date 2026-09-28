@@ -52,7 +52,7 @@ That script used the isolated Homebrew 7.0.6 prefix under `/private/tmp`, automa
 
 ## Owner-supplied iMac result — 28 September 2026
 
-The owner pasted the output of `brew install --formula sirnax/gattini/gattini` from a second Mac. Homebrew auto-tapped `sirnax/gattini`, downloaded and verified the 86.0 KB public formula archive, installed Gattini 0.2.0 and Node 24.21.0, and upgraded OpenSSL 3.6.4_1. The formula reported 78 installed files and completed successfully. The owner then ran `brew services start sirnax/gattini/gattini`; Homebrew reported service `sh.brew.gattini` started. This service action was initiated by the owner, not by the installation or agent. `gattini --help` printed usage but exited through the unknown-command path. That CLI issue has a source fix after the immutable 0.2.0 release; the published archive still has the issue. No offline fake job, daemon restart, `brew test`, or uninstall transcript from that iMac has been supplied yet. The owner-supplied console output is useful field evidence, not independent remote attestation.
+The owner pasted the output of `brew install --formula sirnax/gattini/gattini` from a second Mac. Homebrew auto-tapped `sirnax/gattini`, downloaded and verified the 86.0 KB public formula archive, installed Gattini 0.2.0 and Node 24.21.0, and upgraded OpenSSL 3.6.4_1. The formula reported 78 installed files and completed successfully. The owner then ran `brew services start sirnax/gattini/gattini`; Homebrew reported service `sh.brew.gattini` started. This service action was initiated by the owner, not by the installation or agent. `gattini --help` printed usage but exited through the unknown-command path. That CLI issue has a source fix after the immutable 0.2.0 release; the published archive still has the issue. The owner-supplied console output is useful field evidence, not independent remote attestation.
 
 The follow-up source fix recognizes `gattini --help`, `gattini -h`, and `gattini help` locally, prints usage on stdout, and exits 0 without contacting a daemon. It does not alter the published 0.2.0 archive or formula. Verification on the development Mac:
 
@@ -66,3 +66,17 @@ git diff --check
 ```
 
 Node 24.21.0 and Node 26.10.0 each passed typecheck and **204/204** offline root tests after the CLI change. The direct `--help` check exited 0 and printed 14 usage lines. The first Node 24 run inside the restricted tool sandbox failed **61** daemon socket tests with `listen EPERM`; rerunning with local socket permission passed **204/204**. Node 26 passed **204/204** with the same permission. Logs: `/private/tmp/gattini-help-node24-test.log` and `/private/tmp/gattini-help-node26-test.log`. No provider call, extension publication, formula update, or startup service action was performed in this follow-up.
+
+## iMac lifecycle continuation — owner-supplied transcript
+
+The owner then ran these commands on the same iMac, in order:
+
+```sh
+printf 'Homebrew smoke test\n' > /tmp/gattini-smoke.txt
+gattini run --task-file /tmp/gattini-smoke.txt --idempotency-key imac-brew-smoke-20260928 --json
+brew test sirnax/gattini/gattini
+brew services stop sirnax/gattini/gattini
+brew uninstall --formula sirnax/gattini/gattini
+```
+
+The offline fake job returned exact ID `f2cde7fe-b1ee-4ccd-a745-8ba76bac60f2`, `state:"completed"`, `execution:"completed"`, `acceptance:"unverified"`, no changed files and the expected fake-adapter limitations. `brew test` printed its Gattini formula test invocation and no error. The transcript does not capture each command's exit code independently, so its test outcome is inferred from the absence of an error; independent development-Mac and disposable-prefix formula tests already passed with captured success. Homebrew automatically enabled developer mode for `brew test` and installed 11 Homebrew audit/test gems. `brew services stop` reported the `sh.brew.gattini` service successfully stopped. `brew uninstall --formula` removed Gattini 0.2.0 (78 files), then Homebrew autoremove removed its now-unneeded Node 24.21.0 dependency. The transcript ends at the shell prompt with no reported errors. The tap, durable Gattini state and upgraded OpenSSL may remain; their removal was not part of this test. No iMac daemon restart, event-cursor replay, reinstall, new macOS account, or explicit post-uninstall `brew list` check was supplied. No paid provider was called by the fake job.
