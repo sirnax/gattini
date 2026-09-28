@@ -75,12 +75,13 @@ gattinid
 Leave that terminal open while using Gattini. In another terminal, submit and inspect a job, for example:
 
 ```sh
-gattini start --task-file "$HOME/task.txt" --idempotency-key first-job --json
+printf 'Offline Gattini installation check\n' > "$HOME/task.txt"
+gattini run --task-file "$HOME/task.txt" --idempotency-key first-job --json
 gattini status JOB_ID --json
 gattini result JOB_ID --json
 ```
 
-Replace `JOB_ID` with the ID returned by `start`. Press Control-C in the daemon terminal to stop it cleanly. The daemon handles SIGINT and SIGTERM and removes its socket as it closes. Do not force-quit it during a database write unless necessary; if it exits unexpectedly, inspect job state before resubmitting work.
+Replace `JOB_ID` with the ID returned by `run`. This default job uses the offline fake adapter and reports acceptance as `unverified`; it does not call a model provider. Press Control-C in the daemon terminal to stop it cleanly. The daemon handles SIGINT and SIGTERM and removes its socket as it closes. Do not force-quit it during a database write unless necessary; if it exits unexpectedly, inspect job state before resubmitting work.
 
 By default, state lives in `~/Library/Application Support/Gattini`. The state directory contains durable job history, runtime role configuration, and retained evidence. It is private to your user. The daemon creates it with mode 0700 and the SQLite database and socket are private. To use a different location, set the same absolute `GATTINI_STATE_DIR` for both daemon and CLI processes:
 
@@ -122,7 +123,23 @@ cp -a "$state" "$backup"
 
 Keep backups private: they may contain task text, results, runtime configuration, and evidence. For a custom `GATTINI_STATE_DIR`, back up that directory instead. Retained code worktrees are recorded as job-owned directories and may be outside the state directory; preserve any such worktrees you still need separately. Gattini's cleanup preview is read-only and does not delete them.
 
-To restore, stop the daemon, preserve the current directory under a different name if you may need it, then replace the state directory with the saved copy. Restore ownership to your account if the backup was moved from another account. Run `chmod 700 "$state"` on the restored directory and keep its files private; Gattini refuses a state directory accessible to other users. Start the daemon only after the restore is complete. Restore a full backup from one point in time; do not combine a database from one backup with evidence or configuration from another.
+To restore, stop the daemon and use the full path of one stopped-state backup. For the default state location, replace the example backup path below with the one you actually created:
+
+```sh
+gattini_state="$HOME/Library/Application Support/Gattini"
+gattini_backup="$HOME/Gattini-backup-YYYYMMDD-HHMMSS"
+gattini_previous="$HOME/Gattini-state-before-restore-$(date +%Y%m%d-%H%M%S)"
+if [ -d "$gattini_backup" ] && [ -d "$gattini_state" ] && [ ! -e "$gattini_previous" ]; then
+  mv "$gattini_state" "$gattini_previous" &&
+    cp -a "$gattini_backup" "$gattini_state" &&
+    chmod 700 "$gattini_state"
+else
+  printf 'Check the backup and state paths before restoring.\n' >&2
+  false
+fi
+```
+
+This keeps the former state in `gattini_previous`. If a copy fails after the move, that directory still holds the original; do not restart the daemon until the full state is in place. Restore ownership to your account if the backup was moved from another account. Gattini refuses a state directory accessible to other users. Start the daemon only after the restore is complete, then use `gattini status JOB_ID --json` and `gattini result JOB_ID --json` to check a known job. For a custom `GATTINI_STATE_DIR`, use that absolute state path instead. Restore a full backup from one point in time; do not combine a database from one backup with evidence or configuration from another.
 
 ## Uninstall
 
@@ -143,4 +160,6 @@ This removes the installed CLI and daemon binaries. It does not remove `~/Librar
 
 ## Verification status and limits
 
-The package build, checksum, disposable user-prefix install/upgrade/uninstall, packaged fake job, version mismatch, and stopped-state migration backup/restore have offline tests on the Apple Silicon development Mac. A real normal-prefix Homebrew install/test/uninstall passed there. The public tap and archive then passed a disposable-prefix install/test/uninstall; that test used an existing Node 24 dependency rather than provisioning it. The earlier upgrade fixture starts from a locally fabricated `0.0.9` package because Gattini had no previous public release. Node 24.21.0 and Node 26.10.0 passed typecheck, build and offline suites. An owner-supplied log confirms a separate iMac installed the public formula, with Homebrew downloading Node 24.21.0 and upgrading OpenSSL. The same iMac then completed an offline fake job, ran the formula test without a reported error, stopped its opted-in service and uninstalled Gattini; Homebrew also removed Node 24 as unneeded. A new macOS account and post-uninstall state check have not been observed. Intel macOS is not covered. Provider and runtime installations, credentials, automatic service registration, host containment, and remote cancellation are outside this install guide.
+The package build, checksum, disposable user-prefix install/upgrade/uninstall, packaged fake job, version mismatch, and stopped-state migration backup/restore have offline tests on the Apple Silicon development Mac. A real normal-prefix Homebrew install/test/uninstall passed there. The public tap and archive then passed a disposable-prefix install/test/uninstall; that test used an existing Node 24 dependency rather than provisioning it. The earlier upgrade fixture starts from a locally fabricated `0.0.9` package because Gattini had no previous public release. Node 24.21.0 and Node 26.10.0 passed typecheck, build and offline suites. An owner-supplied log confirms a separate iMac installed the public formula, with Homebrew downloading Node 24.21.0 and upgrading OpenSSL. The same iMac then completed an offline fake job, ran the formula test without a reported error, stopped its opted-in service and uninstalled Gattini; Homebrew also removed Node 24 as unneeded. A new macOS account and iMac post-uninstall state check have not been observed. A separate disposable check installed the published archive, then restored a stopped-state backup and retrieved the same job, result and events after daemon restart; see the [Gate C technical review](roadmaps/GATE_C_TECHNICAL_REVIEW.md). Intel macOS is not covered. Provider and runtime installations, credentials, automatic service registration, host containment, and remote cancellation are outside this install guide.
+
+This source guide's task-file creation and concrete restore example were corrected after `v0.2.0` was published. The immutable 0.2.0 archive still includes the earlier copy; use this current guide for those steps until a later package release includes it.

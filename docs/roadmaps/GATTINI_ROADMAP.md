@@ -1,6 +1,6 @@
 # Gattini — implementation roadmap
 
-Status: Tasks 1–18 complete within documented limits; Checkpoint 7 remains open. Checkpoint 6 was approved for local extension development on 27 September 2026; Checkpoint 5 and Gate B were accepted on 27 September 2026. The owner-prioritized Claude worker milestone passed its approved live direct probe, durable review, guarded code/two approvals/snapshot and local child cancellation on Claude Code 2.1.283 with pinned Haiku. Phase 5 Task 15 has local packaging and disposable-prefix evidence; a genuine fresh-account installation remains untested. Checkpoint 4 was accepted on 26 September 2026, Checkpoint 3 on 26 September 2026, Checkpoint 2 on 25 September 2026, and Checkpoint 1 on 24 September 2026. Companion specification: `GATTINI_MASTER_PLAN.md`. Build on Nate's Mac using Codex or Claude Code. These Gattini files are the authoritative plan/task targets; do not maintain duplicate checklists in `tasks/plan.md` or `tasks/todo.md`.
+Status: Tasks 1–18 complete within documented limits; Checkpoint 7 shared-client checks passed; the fresh-account criterion and owner release decision remain open. Checkpoint 6 was approved for local extension development on 27 September 2026; Checkpoint 5 and Gate B were accepted on 27 September 2026. The owner-prioritized Claude worker milestone passed its approved live direct probe, durable review, guarded code/two approvals/snapshot and local child cancellation on Claude Code 2.1.283 with pinned Haiku. Phase 5 Task 15 has local packaging and disposable-prefix evidence; a genuine fresh-account installation remains untested. Checkpoint 4 was accepted on 26 September 2026, Checkpoint 3 on 26 September 2026, Checkpoint 2 on 25 September 2026, and Checkpoint 1 on 24 September 2026. Companion specification: `GATTINI_MASTER_PLAN.md`. Build on Nate's Mac using Codex or Claude Code. These Gattini files are the authoritative plan/task targets; do not maintain duplicate checklists in `tasks/plan.md` or `tasks/todo.md`.
 
 ## How to execute
 
@@ -294,10 +294,12 @@ Task 18 local implementation, 27–28 September 2026: protocol v2 `evidence.read
 
 ### Checkpoint 7 — release gate C
 
-- [ ] CLI and editor operate on the same durable jobs; both show evidence and approval state correctly.
-- [ ] Install and recovery guides are usable from a fresh Mac account.
+- [x] CLI and editor use exact IDs for the same durable daemon jobs and approval state. The CLI reports result and verification evidence; the editor shows verified bounded diff and snapshot metadata. Manual cross-client flows and a fresh **9/9** extension test pass on each of Node 24 and 26 support this scoped contract.
+- [ ] Install and recovery guides are usable from a fresh Mac account. The public tap passed on a separate iMac with newly installed Node 24, and the published archive's stop, backup, shell restore, restart and exact-job recovery passed in disposable state. No new macOS login account was tested, and the immutable 0.2.0 archive contains the older guide. The [technical review](GATE_C_TECHNICAL_REVIEW.md) proposes a narrower, risk-focused criterion for the owner's approval.
 - [x] Task 16 local validation is evidenced and the tap and 0.2.0 archive are public; the owner-supplied iMac transcript covers install, offline fake job, formula test, service stop and uninstall within the recorded limits.
 - [ ] Human approves the release and chooses the next capability milestone.
+
+Technical review and exact commands: [`GATE_C_TECHNICAL_REVIEW.md`](GATE_C_TECHNICAL_REVIEW.md). The public 0.2.0 archive still contains the earlier installation guide example that omits task-file creation and the `--help` error; the source fixes need a future patch release to reach Homebrew users. The extension remains local and unpublished. The owner must decide whether the revised installation criterion and these limits are acceptable for Gate C.
 
 ## Later milestones — plan separately before implementation
 
