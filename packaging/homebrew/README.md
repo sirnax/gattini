@@ -1,5 +1,7 @@
 # Local Homebrew formula preparation
 
+Gattini currently ships a command-line client and daemon, so its Homebrew package is a **formula**. Use `brew install --formula OWNER/TAP/gattini` and `brew uninstall --formula OWNER/TAP/gattini` once a tap is approved and published. `brew install --cask` selects casks, which are a separate package type and are not produced by this Task 16 formula. A future standalone macOS `.app` could have its own cask after that app and its installation behavior are designed and tested. The VS Code extension has a separate distribution path.
+
 This directory is local Task 16 preparation. No tap has been published. The formula is generated from a checked `release.json` and its exact archive; the renderer recomputes SHA-256 before writing a new lowercase `gattini.rb`.
 
 ```sh

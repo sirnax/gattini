@@ -5,7 +5,7 @@ This is a portable **local** test of real `brew install`, formula `brew test`, f
 ## Exact bundle
 
 - ZIP: `/private/tmp/gattini-homebrew-field-test-20260928.zip`
-- ZIP SHA-256: `6f8b19361db04c933f005908f533b6baa7bc8a351869963dd1e0b1703ca8de5a`
+- ZIP SHA-256: `3a075c46c8e9b91697ffb821a7f423afaed2e166bfa7b36d09071815369afd26`
 - Checked Gattini `0.2.0` archive inside: SHA-256 `97ab34442ff72130333945ff177ff82a82c78a469da050ff1f818d0cc027e06f`
 - Source: `scripts/build-homebrew-field-kit.sh` and `scripts/run-homebrew-field-test.sh` in this repository. The builder rendered the current audited formula from the checked archive, committed it to a disposable local Git tap, included checksums and a first-read text guide, then made the ZIP. The local formula uses a `file:` URL to the ZIP's extracted archive; it is not a published tap or HTTPS release.
 
@@ -15,11 +15,11 @@ Exact build and unpack validation commands:
 bash -n scripts/run-homebrew-field-test.sh
 sh -n scripts/build-homebrew-field-kit.sh
 sh scripts/build-homebrew-field-kit.sh /private/tmp/gattini-task16-isolated-brew-20260928/rebuilt-current
-mkdir -p /private/tmp/gattini-field-zip-final-extract-check
-ditto -xk /private/tmp/gattini-homebrew-field-test-20260928.zip /private/tmp/gattini-field-zip-final-extract-check
-(cd /private/tmp/gattini-field-zip-final-extract-check/gattini-homebrew-field-test-20260928 && shasum -a 256 -c MANIFEST.sha256)
-git -C /private/tmp/gattini-field-zip-final-extract-check/gattini-homebrew-field-test-20260928/tap-source status --short --branch
-cmp -s scripts/run-homebrew-field-test.sh /private/tmp/gattini-field-zip-final-extract-check/gattini-homebrew-field-test-20260928/test-homebrew.sh
+mkdir -p /private/tmp/gattini-field-zip-explicit-formula-check
+ditto -xk /private/tmp/gattini-homebrew-field-test-20260928.zip /private/tmp/gattini-field-zip-explicit-formula-check
+(cd /private/tmp/gattini-field-zip-explicit-formula-check/gattini-homebrew-field-test-20260928 && shasum -a 256 -c MANIFEST.sha256)
+git -C /private/tmp/gattini-field-zip-explicit-formula-check/gattini-homebrew-field-test-20260928/tap-source status --short --branch
+cmp -s scripts/run-homebrew-field-test.sh /private/tmp/gattini-field-zip-explicit-formula-check/gattini-homebrew-field-test-20260928/test-homebrew.sh
 ```
 
 The builder reported archive checksum `OK` and formula `Syntax OK`. Extracting the ZIP preserved the local tap Git repository, and all six manifest entries returned `OK`; its Git worktree was clean. The final ZIP contains no run logs, report, job state, or credentials.
@@ -34,7 +34,7 @@ ditto -xk ~/Downloads/gattini-homebrew-field-test-20260928.zip /private/tmp
 bash /private/tmp/gattini-homebrew-field-test-20260928/test-homebrew.sh
 ```
 
-Compare the first command's hash with the ZIP SHA-256 above before running the script. The script checks macOS ARM architecture, expects normal Apple Silicon Homebrew at `/opt/homebrew`, refuses a pre-existing Gattini installation or same-named test tap, verifies its own file manifest, then uses a local `gattini/local-test` tap. It runs `brew install gattini/local-test/gattini` **without** the disposable test's `--ignore-dependencies` workaround, followed by `brew test`. It starts the installed daemon only in the foreground test process, runs one offline fake job using private state in a path with spaces, checks exact status/result/events, stops the daemon, uninstalls Gattini, removes the local tap, and verifies that the job database is unchanged. It does not enable a login service or contact a model provider. On failure it attempts to remove the test installation and tap and keeps a console log.
+Compare the first command's hash with the ZIP SHA-256 above before running the script. The script checks macOS ARM architecture, expects normal Apple Silicon Homebrew at `/opt/homebrew`, refuses a pre-existing Gattini installation or same-named test tap, verifies its own file manifest, then uses a local `gattini/local-test` tap. It runs `brew install --formula gattini/local-test/gattini` **without** the disposable test's `--ignore-dependencies` workaround, followed by `brew test`. It starts the installed daemon only in the foreground test process, runs one offline fake job using private state in a path with spaces, checks exact status/result/events, stops the daemon, runs `brew uninstall --formula`, removes the local tap, and verifies that the job database is unchanged. It does not enable a login service or contact a model provider. On failure it attempts to remove the test installation and tap and keeps a console log.
 
 Homebrew may download and install Node 24 plus its dependencies if that Mac does not already have them. Those shared dependencies may remain after Gattini is uninstalled; the script deliberately does not run `brew autoremove`. This is a real normal-prefix Gattini install **on the Mac where the owner runs the script**, which the owner requested for this test. It does not install Gattini in the normal Homebrew prefix on the development Mac.
 
@@ -42,10 +42,10 @@ If the test prints `PASS`, return `/private/tmp/gattini-homebrew-field-test-2026
 
 ## Local rehearsal and limit
 
-The script was run against a separate disposable Homebrew 7.0.6 prefix, with an internal test-only environment override to use its copied Node 24 keg. The final ZIP extraction and `cmp -s` check confirmed its script bytes match the rehearsed source. Only the first-read text guide changed after the rehearsal:
+The script was run against a separate disposable Homebrew 7.0.6 prefix, with an internal test-only environment override to use its copied Node 24 keg. The final ZIP extraction and `cmp -s` check confirmed its script bytes match the rehearsed source:
 
 ```sh
-GATTINI_FIELD_DISPOSABLE_BREW=/private/tmp/gattini-task16-isolated-brew-20260928/brew-isolated /private/tmp/gattini-homebrew-field-test-20260928/test-homebrew.sh
+GATTINI_FIELD_DISPOSABLE_BREW=/private/tmp/gattini-task16-isolated-brew-20260928/brew-isolated bash /private/tmp/gattini-homebrew-field-test-20260928/test-homebrew.sh
 ```
 
-It exited **0** after checksum validation, local tap addition, `brew install`, `brew test`, fake-job status/result/events `[1,2,3]`, Gattini uninstall, test-tap removal, and unchanged job database. The exact fake job was `cc0b7be6-7f86-48c4-b9b0-9ad0a120949c`; the final database SHA-256 was `de7a1d35fc985fba82b916c39716c6677ad48e4acbf2f141a12c52c27f974384`. The rehearsal's Node 24 was already present, so it **does not** establish dependency installation on a separate Mac. The owner-run result is still pending and must not be reported as passed in advance.
+It exited **0** after checksum validation, local tap addition, `brew install --formula`, `brew test`, fake-job status/result/events `[1,2,3]`, `brew uninstall --formula`, test-tap removal, and unchanged job database. The exact fake job was `6d88b05b-dded-4fe5-9bf6-054cc3dee57f`; the final database SHA-256 was `c4ca018dfe251102dd36ead64d305086062e11356016fa0a301ab436b75ba739`. The rehearsal's Node 24 was already present, so it **does not** establish dependency installation on a separate Mac. The owner-run result is still pending and must not be reported as passed in advance.

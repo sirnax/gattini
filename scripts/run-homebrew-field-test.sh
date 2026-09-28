@@ -41,8 +41,8 @@ cleanup() {
   set +e
   stop_daemon
   if [[ "$tap_owned" -eq 1 ]]; then
-    if "$brew_command" list --versions gattini >/dev/null 2>&1; then
-      "$brew_command" uninstall --force "$formula" || status=1
+    if "$brew_command" list --formula --versions gattini >/dev/null 2>&1; then
+      "$brew_command" uninstall --formula --force "$formula" || status=1
     fi
     if "$brew_command" tap | grep -Fxq "$tap"; then
       "$brew_command" untap "$tap" || status=1
@@ -81,7 +81,7 @@ echo "macOS: $(sw_vers -productVersion); CPU: $(uname -m)"
 brew_version=$("$brew_command" --version)
 echo "$brew_version"
 echo "Homebrew prefix: $prefix"
-if "$brew_command" list --versions gattini >/dev/null 2>&1; then
+if "$brew_command" list --formula --versions gattini >/dev/null 2>&1; then
   echo "Gattini is already installed. No changes were made." >&2
   exit 1
 fi
@@ -101,8 +101,8 @@ git -C "$kit/tap-source" status --porcelain
 
 tap_owned=1
 "$brew_command" tap "$tap" "$kit/tap-source"
-"$brew_command" install "${install_flags[@]}" "$formula"
-"$brew_command" list --versions "$formula"
+"$brew_command" install --formula "${install_flags[@]}" "$formula"
+"$brew_command" list --formula --versions "$formula"
 HOMEBREW_DEVELOPER=1 "$brew_command" test "$formula"
 
 mkdir -p "$state"
@@ -142,10 +142,10 @@ database="$state/jobs.sqlite"
   exit 1
 }
 database_before=$(shasum -a 256 "$database" | awk '{print $1}')
-"$brew_command" uninstall --force "$formula"
+"$brew_command" uninstall --formula --force "$formula"
 "$brew_command" untap "$tap"
 tap_owned=0
-if "$brew_command" list --versions gattini >/dev/null 2>&1; then
+if "$brew_command" list --formula --versions gattini >/dev/null 2>&1; then
   echo "Homebrew still lists Gattini after uninstall." >&2
   exit 1
 fi
