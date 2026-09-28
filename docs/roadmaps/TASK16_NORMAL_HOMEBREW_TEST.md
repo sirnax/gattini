@@ -1,6 +1,6 @@
 # Task 16 normal Homebrew test — 28 September 2026
 
-The owner expressly authorised one Gattini formula install, offline test and uninstall in this development Mac's normal Homebrew. The final run passed on macOS 26.6.2 arm64 with Homebrew 7.0.6 under `/opt/homebrew`. This is a real formula lifecycle test, not a disposable-prefix simulation. No tap or package was published.
+The owner expressly authorised one Gattini formula install, offline test and uninstall in this development Mac's normal Homebrew. The final run passed on macOS 26.6.2 arm64 with Homebrew 7.0.6 under `/opt/homebrew`. This is a real formula lifecycle test, not a disposable-prefix simulation. At the time of this test, no tap or package had been published; the later public release is recorded in [Task 16 tap publication](TASK16_TAP_PUBLICATION.md).
 
 ## Exact run and result
 
@@ -35,4 +35,4 @@ All six manifest entries returned `OK`, script comparison succeeded, and the loc
 
 ## Limits and side effects
 
-Node 24.21.0 was already installed, so this run did not test installing Node on a Mac that lacks it. Homebrew auto-updated three taps, upgraded `openssl@3` to 3.6.4_1, and updated its audit gems during the authorised normal-prefix operation. Those shared changes were left in place. The local formula still has a placeholder homepage and `file:` archive URL. An actual published HTTPS release, owner-approved tap name, fresh Mac/account check if required, and publication or explicit deferral decision remain open. Task 16 and Checkpoint 7 are not complete.
+Node 24.21.0 was already installed, so this run did not test installing Node on a Mac that lacks it. Homebrew auto-updated three taps, upgraded `openssl@3` to 3.6.4_1, and updated its audit gems during the authorised normal-prefix operation. Those shared changes were left in place. This run used a local formula with a placeholder homepage and `file:` archive URL. The subsequent public release and HTTPS formula are recorded separately. A completed install on another Mac/account remains unverified; Task 16 and Checkpoint 7 remain open.

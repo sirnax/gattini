@@ -1,6 +1,6 @@
 # Install Gattini locally on macOS
 
-This guide describes the local `gattini` 0.2.0 package for Apple Silicon (macOS arm64). The package is a versioned npm tarball; it is not published to npm or Homebrew. You need Node.js 24 or newer and its bundled npm. Install Node yourself using a source you trust. Gattini does not install or authenticate OpenCode, Codex, Claude Code, or any provider.
+This guide describes Gattini 0.2.0 for Apple Silicon (macOS arm64). The public Homebrew formula installs the versioned CLI and daemon archive with Node 24. The archive is also available for a manual npm installation. Gattini does not install or authenticate OpenCode, Codex, Claude Code, or any provider.
 
 On the release builder's Apple Silicon Mac, from a Gattini source checkout with the locked development dependencies already installed, produce the tarball and checksum:
 
@@ -9,7 +9,7 @@ mkdir -p "$HOME/gattini-release"
 node scripts/package-local.mjs --out-dir "$HOME/gattini-release"
 ```
 
-For a fresh account, obtain `gattini-0.2.0.tgz` and its `.sha256` file from a trusted transfer, place both in `~/gattini-release`, then verify them before installing:
+For a manual npm installation, obtain `gattini-0.2.0.tgz` and its `.sha256` file from the [public v0.2.0 release](https://github.com/sirnax/gattini/releases/tag/v0.2.0) or a trusted transfer, place both in `~/gattini-release`, then verify them before installing:
 
 ```sh
 cd "$HOME/gattini-release"
@@ -22,16 +22,26 @@ The checksum detects accidental corruption when checked against a checksum obtai
 
 | Component | Local artifact | Status |
 | --- | --- | --- |
-| CLI and daemon | `gattini-0.2.0.tgz` with checksum and `release.json` | Built byte-identically under Node 24 and 26 on Apple Silicon; disposable-prefix install tests passed. Not published. |
+| CLI and daemon | [Public 0.2.0 archive](https://github.com/sirnax/gattini/releases/tag/v0.2.0) with checksum and `release.json` | Built byte-identically under Node 24 and 26 on Apple Silicon; released from reproducible source tag `v0.2.0`. |
 | Linux CLI and daemon | `gattini-0.2.0-linux-arm64.tgz` and `gattini-0.2.0-linux-x64.tgz` | Offline Node 24 suites passed in disposable Debian 12 containers on both architectures; packaged daemon/CLI restart checks passed on Ubuntu 24.04. Not published. |
-| Homebrew formula | Generated `gattini.rb` bound to the exact tarball checksum | Local draft only. A real tap URL, named-formula audit, `brew test`, and isolated Homebrew install/upgrade/uninstall remain open. |
+| Homebrew formula | [Public `sirnax/gattini/gattini` formula](https://github.com/sirnax/homebrew-gattini) bound to the exact archive checksum | Strict audit, public-download, disposable public-tap install/test/uninstall, and a normal-prefix local install/test/uninstall passed. A completed install on a separate fresh Mac remains unconfirmed. |
 | VS Code client | `extension/` source and compiled development host | Local extension-host and manual checks passed. No VSIX or Marketplace release has been prepared or installed into a normal profile. |
 
 The verified package targets macOS arm64. Linux ARM64/x64 archives have passed disposable Debian 12 and Ubuntu 24.04 checks; see the [Linux guide](installation-linux.md) and the source repository’s Task 16 Linux validation record. Intel macOS and Windows builds have not been validated. The editor client requires the matching `0.2.0` daemon and protocol v2; it does not contain or start the daemon.
 
-## Install
+## Install with Homebrew
 
-The examples use a user-owned npm prefix at `~/.local`, so installation does not require administrator access. Add its `bin` directory to your `PATH` if it is not already there. For zsh:
+On an Apple Silicon Mac with Homebrew, run:
+
+```sh
+brew install --formula sirnax/gattini/gattini
+```
+
+Homebrew adds the tap and installs `node@24` if needed. The formula checks the archive SHA-256 before installation. Installing the formula alone does not start `gattinid` or register a login service. Use the manual daemon steps below. If an earlier attempt failed while the release archive was private, rerun the same command; the published archive now downloads without authentication.
+
+## Manual npm install
+
+The manual npm examples use a user-owned prefix at `~/.local`, so installation does not require administrator access. This route needs Node.js 24 or newer and its bundled npm, installed from a source you trust. Add the prefix's `bin` directory to your `PATH` if it is not already there. For zsh:
 
 ```sh
 mkdir -p "$HOME/.local"
@@ -81,11 +91,11 @@ gattinid
 
 Set this variable in the client terminal too. Do not point multiple daemon instances at one state directory.
 
-Login startup registration is not part of this installation. If a future release offers a launch service, enabling it must remain an explicit opt-in and it must run the installed version. This guide does not provide a service definition.
+Login startup registration is not part of these installation steps. The Homebrew formula defines an optional service, but `brew install` does not enable it. Start and stop the daemon manually unless you separately choose to enable that service.
 
 ## Upgrade while preserving state
 
-Before upgrading, finish or cancel active work where possible, then press Control-C in the daemon terminal and wait for it to exit. Keep a backup as described below. Install the new tarball over the existing user prefix:
+Before upgrading, finish or cancel active work where possible, then press Control-C in the daemon terminal and wait for it to exit. Keep a backup as described below. For a Homebrew installation, use `brew upgrade sirnax/gattini/gattini` when a newer formula is published. For a manual npm installation, install the new tarball over the existing user prefix:
 
 ```sh
 npm install --global --prefix "$HOME/.local" "$HOME/gattini-release/gattini-NEXT_VERSION.tgz"
@@ -116,7 +126,14 @@ To restore, stop the daemon, preserve the current directory under a different na
 
 ## Uninstall
 
-Stop the daemon first. Remove the package from the same user prefix:
+Stop the daemon first. For Homebrew, remove the formula and optionally the tap:
+
+```sh
+brew uninstall --formula sirnax/gattini/gattini
+brew untap sirnax/gattini
+```
+
+For a manual npm installation, remove the package from the same user prefix:
 
 ```sh
 npm uninstall --global --prefix "$HOME/.local" gattini
@@ -126,4 +143,4 @@ This removes the installed CLI and daemon binaries. It does not remove `~/Librar
 
 ## Verification status and limits
 
-The package build, checksum, disposable user-prefix install/upgrade/uninstall, packaged fake job, version mismatch, and stopped-state migration backup/restore have offline tests on the Apple Silicon development Mac. The upgrade fixture starts from a locally fabricated `0.0.9` package because Gattini has no previous published release. The project has also passed Node 24.21.0 and Node 26.10.0 typecheck, build and offline suites. A genuine fresh macOS account installation has not been performed; the disposable prefix does not prove account provisioning, shell setup or permissions on a new account. Intel macOS is not covered. Provider and runtime installations, credentials, service registration, host containment, and remote cancellation are outside this install guide.
+The package build, checksum, disposable user-prefix install/upgrade/uninstall, packaged fake job, version mismatch, and stopped-state migration backup/restore have offline tests on the Apple Silicon development Mac. A real normal-prefix Homebrew install/test/uninstall passed there. The public tap and archive then passed a disposable-prefix install/test/uninstall; that test used an existing Node 24 dependency rather than provisioning it. The earlier upgrade fixture starts from a locally fabricated `0.0.9` package because Gattini had no previous public release. Node 24.21.0 and Node 26.10.0 passed typecheck, build and offline suites. A completed installation on a separate fresh Mac/account has not yet been observed. Intel macOS is not covered. Provider and runtime installations, credentials, service registration, host containment, and remote cancellation are outside this install guide.
