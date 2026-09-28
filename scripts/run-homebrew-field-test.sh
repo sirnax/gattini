@@ -8,6 +8,7 @@ archive=gattini-0.2.0.tgz
 state="$kit/state with spaces"
 tap_owned=0
 daemon_pid=
+completed=0
 
 if [[ ! -f "$kit/MANIFEST.sha256" || ! -f "$kit/$archive" ]]; then
   echo "Extract the test bundle into $kit before running this script." >&2
@@ -19,11 +20,9 @@ exec > >(tee "$run_dir/console.log") 2>&1
 
 if [[ -n "${GATTINI_FIELD_DISPOSABLE_BREW:-}" ]]; then
   brew_command=$GATTINI_FIELD_DISPOSABLE_BREW
-  install_flags=(--ignore-dependencies)
   disposable=1
 else
   brew_command=brew
-  install_flags=()
   disposable=0
 fi
 
@@ -39,6 +38,9 @@ cleanup() {
   local status=$?
   trap - EXIT
   set +e
+  if [[ "$completed" -ne 1 ]]; then
+    status=1
+  fi
   stop_daemon
   if [[ "$tap_owned" -eq 1 ]]; then
     if "$brew_command" list --formula --versions gattini >/dev/null 2>&1; then
@@ -101,7 +103,11 @@ git -C "$kit/tap-source" status --porcelain
 
 tap_owned=1
 "$brew_command" tap "$tap" "$kit/tap-source"
-"$brew_command" install --formula "${install_flags[@]}" "$formula"
+if [[ "$disposable" -eq 1 ]]; then
+  "$brew_command" install --formula --ignore-dependencies "$formula"
+else
+  "$brew_command" install --formula "$formula"
+fi
 "$brew_command" list --formula --versions "$formula"
 HOMEBREW_DEVELOPER=1 "$brew_command" test "$formula"
 
@@ -173,3 +179,4 @@ echo "GATTINI_FIELD_DATABASE_SHA256=$database_after"
   "$node_before" "$node_after" "$(shasum -a 256 "$kit/$archive" | awk '{print $1}')" \
   "$job_id" "$database_after"
 echo "Report: $kit/report.json"
+completed=1
