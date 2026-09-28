@@ -8,6 +8,16 @@ const Module = require('node:module');
 const { GattiniClient, ClientError, socketPath } = require('../dist/client.js');
 const { JobSession } = require('../dist/session.js');
 
+test('Linux editor socket path follows XDG state directory and refuses unsupported Windows', () => {
+  assert.equal(socketPath({}, 'linux', '/home/example'), '/home/example/.local/state/gattini/gattinid.sock');
+  assert.equal(socketPath({ XDG_STATE_HOME: '/home/example/custom state' }, 'linux', '/home/example'),
+    '/home/example/custom state/gattini/gattinid.sock');
+  assert.equal(socketPath({ GATTINI_STATE_DIR: '/tmp/gattini state' }, 'linux', '/home/example'),
+    '/tmp/gattini state/gattinid.sock');
+  assert.throws(() => socketPath({ XDG_STATE_HOME: 'relative' }, 'linux', '/home/example'), error => error.code === 'INVALID_STATE_DIR');
+  assert.throws(() => socketPath({}, 'win32', 'C:\\Users\\example'), error => error.code === 'UNSUPPORTED_PLATFORM');
+});
+
 function state() {
   const values = new Map();
   return { get: (key, fallback) => values.has(key) ? values.get(key) : fallback,

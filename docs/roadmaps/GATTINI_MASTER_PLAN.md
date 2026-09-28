@@ -37,7 +37,7 @@ Add a Codex worker adapter and run the same contract tests against both real run
 
 ### Editor and distribution release
 
-Package for macOS, then allow local Homebrew tap validation and a thin VS Code extension to proceed independently once the protocol is stable and the human approves extension work. Tap publication still needs separate approval. Other editors can invoke the CLI from their terminals or tasks; native integrations require explicit compatibility testing.
+Package for macOS ARM first, then Debian/Ubuntu Linux, with Windows later. Allow local Homebrew tap validation and a thin VS Code extension to proceed independently once the protocol is stable and the human approves extension work. Tap and extension publication still need separate approval. Other editors can invoke the CLI from their terminals or tasks; native integrations require explicit compatibility testing.
 
 ### Whole-computer expansion
 

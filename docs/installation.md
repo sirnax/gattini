@@ -26,7 +26,7 @@ The checksum detects accidental corruption when checked against a checksum obtai
 | Homebrew formula | Generated `gattini.rb` bound to the exact tarball checksum | Local draft only. A real tap URL, named-formula audit, `brew test`, and isolated Homebrew install/upgrade/uninstall remain open. |
 | VS Code client | `extension/` source and compiled development host | Local extension-host and manual checks passed. No VSIX or Marketplace release has been prepared or installed into a normal profile. |
 
-The current package targets macOS arm64. Intel macOS, Linux and Windows builds have not been validated. The editor client requires the matching `0.2.0` daemon and protocol v2; it does not contain or start the daemon.
+The verified package targets macOS arm64. A Debian/Ubuntu Linux build path is in preparation but has not yet run under Linux; see the [Linux guide](installation-linux.md). Intel macOS and Windows builds have not been validated. The editor client requires the matching `0.2.0` daemon and protocol v2; it does not contain or start the daemon.
 
 ## Install
 

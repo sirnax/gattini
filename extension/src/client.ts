@@ -27,9 +27,20 @@ function object(value: unknown): value is ObjectValue { return typeof value === 
 function boundedText(value: unknown): string { return typeof value === "string" ? value.slice(0, 512).replace(/[\u0000-\u001f\u007f]/g, " ") : "Invalid daemon message"; }
 function validId(value: unknown): value is string { return typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f]/.test(value); }
 
-export function socketPath(env: NodeJS.ProcessEnv = process.env): string {
-  const directory = env.GATTINI_STATE_DIR ?? join(homedir(), "Library", "Application Support", "Gattini");
-  if (!isAbsolute(directory) || directory.includes("\0")) throw new ClientError("INVALID_STATE_DIR", "GATTINI_STATE_DIR must be an absolute path");
+export function socketPath(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, home = homedir()): string {
+  let directory: string;
+  if (env.GATTINI_STATE_DIR !== undefined) {
+    directory = env.GATTINI_STATE_DIR;
+    if (!isAbsolute(directory) || directory.includes("\0")) throw new ClientError("INVALID_STATE_DIR", "GATTINI_STATE_DIR must be an absolute path");
+  } else if (platform === "darwin") {
+    directory = join(home, "Library", "Application Support", "Gattini");
+  } else if (platform === "linux") {
+    const xdg = env.XDG_STATE_HOME;
+    if (xdg !== undefined && (!isAbsolute(xdg) || xdg.includes("\0"))) throw new ClientError("INVALID_STATE_DIR", "XDG_STATE_HOME must be an absolute path");
+    directory = join(xdg ?? join(home, ".local", "state"), "gattini");
+  } else {
+    throw new ClientError("UNSUPPORTED_PLATFORM", `Gattini socket path is not defined for ${platform}`);
+  }
   return join(directory, "gattinid.sock");
 }
 

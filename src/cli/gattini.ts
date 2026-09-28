@@ -2,10 +2,10 @@
 /** CLI client for the local gattinid Unix socket protocol. */
 import { randomUUID } from "node:crypto";
 import { connect, type Socket } from "node:net";
-import { homedir } from "node:os";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { RELEASE_VERSION } from "../core/release.js";
+import { resolveStateDirectory } from "../core/state-dir.js";
 
 const PROTOCOL_VERSION = 2;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -154,14 +154,11 @@ function parseArgs(argv: string[]): { command: Command; params: JsonObject; json
 }
 
 function socketPath(): string {
-  const override = process.env.GATTINI_STATE_DIR;
-  if (override !== undefined) {
-    if (!isAbsolute(override) || override.includes("\0")) {
-      throw new CliError("GATTINI_STATE_DIR must be an absolute path");
-    }
-    return join(override, "gattinid.sock");
+  try {
+    return join(resolveStateDirectory(), "gattinid.sock");
+  } catch (error) {
+    throw new CliError(error instanceof Error ? error.message : "Invalid Gattini state directory");
   }
-  return join(homedir(), "Library", "Application Support", "Gattini", "gattinid.sock");
 }
 
 function requestSocket(path: string, request: JsonObject): Promise<Response> {

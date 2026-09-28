@@ -14,7 +14,10 @@ const secondOutput = join(root, "release two");
 const prefix = join(root, "install prefix");
 const state = join(root, "private state");
 const npmCache = join(root, "npm cache");
-const archive = join(output, `gattini-${RELEASE_VERSION}.tgz`);
+const archiveName = process.platform === "linux"
+  ? `gattini-${RELEASE_VERSION}-linux-${process.arch}.tgz`
+  : `gattini-${RELEASE_VERSION}.tgz`;
+const archive = join(output, archiveName);
 const repository = process.cwd();
 let daemon: ChildProcess | undefined;
 
@@ -131,13 +134,13 @@ after(async () => {
 test("local release is reproducible and has a matching checksum manifest", () => {
   command(process.execPath, ["scripts/package-local.mjs", "--out-dir", secondOutput]);
   const hash = digest(archive);
-  assert.equal(digest(join(secondOutput, `gattini-${RELEASE_VERSION}.tgz`)), hash);
-  assert.equal(readFileSync(join(output, `gattini-${RELEASE_VERSION}.tgz.sha256`), "utf8"), `${hash}  gattini-${RELEASE_VERSION}.tgz\n`);
+  assert.equal(digest(join(secondOutput, archiveName)), hash);
+  assert.equal(readFileSync(join(output, `${archiveName}.sha256`), "utf8"), `${hash}  ${archiveName}\n`);
   const release = JSON.parse(readFileSync(join(output, "release.json"), "utf8")) as Record<string, unknown>;
   assert.equal(release.name, "gattini");
   assert.equal(release.version, RELEASE_VERSION);
   assert.equal(release.sha256, hash);
-  assert.equal(release.archive, `gattini-${RELEASE_VERSION}.tgz`);
+  assert.equal(release.archive, archiveName);
   assert.equal(release.platform, process.platform);
   assert.equal(release.arch, process.arch);
   assert.equal(release.nodeRange, ">=24");

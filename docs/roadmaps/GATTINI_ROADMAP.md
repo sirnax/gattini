@@ -220,7 +220,7 @@ Checkpoint 5 and Gate B were explicitly accepted by the owner on **27 September 
 
 - Post-live final verification, 27 September 2026: Node **24.21.0** command `env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run typecheck && env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build && env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` passed **195/195** (27.60 s test duration). Node **26.10.0** command `npm run typecheck && npm run build && node --test --test-concurrency=1 dist/tests/*.test.js` passed **195/195** (104.67 s test duration), retaining the previously documented serial setting. TypeScript **5.9.3**, both typechecks/builds passed; no failed, skipped or cancelled tests. These suites made no provider calls. `git diff --check` passed, and `src/core/code-policy.ts` still declares `CODE_PATH_PERMISSION_SYNTAX_VERIFIED = false`. The roadmap and current project guidance now record the completed narrow Claude milestone.
 
-## Phase 5 — macOS distribution and editors, release gate C
+## Phase 5 — distribution and editors, release gate C
 
 ### [x] Task 15 — reproducible local release packaging
 
@@ -246,6 +246,8 @@ Checkpoint 5 and Gate B were explicitly accepted by the owner on **27 September 
 - [x] CLI protocol v1 release handshake and existing evidence/approval calls are documented. The missing editor event-cursor and bounded evidence-content calls are explicitly assigned to a future protocol v2 release in `TASK17_PROTOCOL_V2_PLAN.md`; they are not implemented or claimed stable in v1.
 - [x] Human approves extension work. The owner explicitly approved local extension development and asked for the current work to be committed on 27 September 2026. Tap publication remains pending and does not block local extension development; provider turns, startup services, real-account installs and publication retain their separate approval requirements.
 
+Platform order confirmed by the owner on 28 September 2026: **macOS ARM first, Debian/Ubuntu Linux next, Windows later**. Task 16's Homebrew tap is specifically the macOS distribution path. Linux needs its own architecture-labelled archive and Linux runtime checks; Windows needs a separate transport, path, package and test design before support can be claimed. None of these platform targets authorises publication, installation into the normal account, startup services or paid provider tests.
+
 ### [ ] Task 16 — Homebrew tap for `gattini`
 
 - Deliver: formula and release workflow after owner/name/publication approval.
@@ -257,6 +259,8 @@ Checkpoint 5 and Gate B were explicitly accepted by the owner on **27 September 
 Local preparation, 27 September 2026: GPT-6 Sol medium owned only `scripts/render-homebrew-formula.mjs`, `packaging/homebrew/README.md` and `tests/homebrew-formula.test.ts`. The renderer rechecked the exact Task 15 archive and generated a disposable draft `Gattini-local-draft.rb` under `/private/tmp/gattini-task15-final-node24` with SHA-256 `73e0f6b664dd064f46ce98a069fccee81e0fed188859b3fe626d0f2381736664`. `ruby -c` reported `Syntax OK`; focused typecheck/build/test passed **1/1**. The draft declares macOS arm64 and `node@24`, creates command wrappers, and defines a service only for separate opt-in registration. It uses a placeholder homepage and local file URL; no `brew audit`, `brew test`, Homebrew installation, external tap, provider call or publication occurred. Task 16 remains open pending owner/name decisions and required local formula lifecycle validation.
 
 Local continuation, 28 September 2026: the current `0.2.0` archive built byte-identically with Node 24 and 26 and passed its checksum. The formula renderer now produces the required lowercase `gattini.rb` and includes a functional offline fake-job test. A disposable staging rehearsal upgraded the actual `0.1.0` archive to `0.2.0`, retrieved the old durable job, ran a new job, replayed events and preserved state after removing staged commands. This is not a Homebrew install. Homebrew 7.0.6 rejected standalone file-path audit; its developer setup also installed Homebrew audit gems into the shared Homebrew installation, which was disclosed and left untouched. Named-formula audit, `brew test`, isolated formula install/upgrade/uninstall, real release URL/tap name and publication decision remain open. See [`TASK16_LOCAL_VALIDATION.md`](TASK16_LOCAL_VALIDATION.md).
+
+Platform preparation, 28 September 2026: the local archive builder now selects native macOS arm64 or Linux arm64/x64 and gives Linux archives architecture-labelled names. CLI, daemon and editor use the Linux XDG state path when there is no explicit state override. On the Mac host, Node 24.21.0 and 26.10.0 each passed 203/203 root tests and 9/9 extension tests after these changes. The refreshed Mac archive was byte-identical across both Node versions, checksum-checked, and passed a disposable 0.1.0 → 0.2.0 state-preserving upgrade rehearsal. No Linux Node runtime was present in cached Docker images, so no Linux archive or Linux-native test is claimed yet. See [`TASK16_LOCAL_VALIDATION.md`](TASK16_LOCAL_VALIDATION.md).
 
 ### [x] Task 17 — VS Code submit/status client
 

@@ -1,6 +1,6 @@
 # Gattini VS Code client (Task 17)
 
-This local extension requires Gattini daemon release `0.2.0` and protocol v2. It uses `GATTINI_STATE_DIR/gattinid.sock`, or `~/Library/Application Support/Gattini/gattinid.sock` when the environment variable is absent. Start the daemon separately. Opening a workspace does not submit a task.
+This local extension requires Gattini daemon release `0.2.0` and protocol v2. It uses `GATTINI_STATE_DIR/gattinid.sock` when that variable is set. Otherwise the socket is under `~/Library/Application Support/Gattini` on macOS, or `$XDG_STATE_HOME/gattini` (default `~/.local/state/gattini`) on Linux. Start the daemon separately. Opening a workspace does not submit a task.
 
 Use **Gattini: Submit Task** in a trusted workspace. With multiple folders, choose one explicitly. The chosen folder labels the local job record; the daemon remains responsible for runtime selection and working directory. The command sends task text with a persisted idempotency key and saves the returned job ID in VS Code workspace state. **Gattini: Show Jobs** opens a plain-text output channel with durable status and bounded event pages. The client polls every three seconds, saves each processed event cursor, and resumes that job after VS Code or daemon restart. A cursor gap or protocol mismatch is shown as an error and never skipped silently.
 

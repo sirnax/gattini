@@ -1,6 +1,5 @@
 import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join, sep } from "node:path";
+import { join, sep } from "node:path";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { JobStore } from "./store.js";
 import { WorkerScheduler } from "./scheduler.js";
@@ -25,14 +24,10 @@ import { parseClaudeRoleConfig, type ClaudeRoleConfig } from "../core/claude-rol
 import { preflightClaudeTurn, startClaudeTurn, type ClaudeTurnHandle } from "../adapters/claude-cli.js";
 import { unwrapClaudeProposal } from "../adapters/claude-proposal.js";
 import { DATABASE_SCHEMA_VERSION, RELEASE_VERSION } from "../core/release.js";
+import { resolveStateDirectory } from "../core/state-dir.js";
 
 export function stateDirectory(): string {
-  const override = process.env.GATTINI_STATE_DIR;
-  if (override) {
-    if (!isAbsolute(override)) throw new Error("GATTINI_STATE_DIR must be absolute");
-    return override;
-  }
-  return join(homedir(), "Library", "Application Support", "Gattini");
+  return resolveStateDirectory();
 }
 
 function ensurePrivateDirectory(path: string): void {
