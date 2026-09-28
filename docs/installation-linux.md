@@ -1,6 +1,6 @@
 # Install Gattini locally on Debian or Ubuntu Linux
 
-This guide is for the local `0.2.0` Linux archive. Choose the file matching `uname -m`: `aarch64` uses `gattini-0.2.0-linux-arm64.tgz`, and `x86_64` uses `gattini-0.2.0-linux-x64.tgz`. Linux release validation is recorded separately in the roadmap; an archive alone does not prove a distribution or CPU works. No package is published, and no provider runtime or login is bundled.
+This guide is for the local `0.2.0` Linux archive. Choose the file matching `uname -m`: `aarch64` uses `gattini-0.2.0-linux-arm64.tgz`, and `x86_64` uses `gattini-0.2.0-linux-x64.tgz`. Both archives passed offline Node 24 suites in disposable Debian 12 containers and packaged daemon/CLI restart checks on Ubuntu 24.04. The x64 checks ran under Docker emulation on an Apple Silicon host; a native x64 machine and a fresh-host install remain untested. The source repository’s Task 16 Linux validation record has the exact commands and limits. No package is published, and no provider runtime or login is bundled.
 
 Use Node.js 24 or newer and its npm. Obtain Node from a source you trust; Gattini does not install it. On a source checkout with the pinned development dependencies already present, `node scripts/package-local.mjs --out-dir ABSOLUTE_DIRECTORY` builds the archive for the **native** Linux architecture. It refuses other platforms. The output includes `release.json` and a `.sha256` file. A checksum detects corruption only when obtained through a trusted channel.
 

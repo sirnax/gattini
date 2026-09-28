@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
+import { tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
 import { afterEach, test } from "node:test";
 import { parseRuntimeResult } from "../src/core/contracts.js";
@@ -25,7 +26,7 @@ afterEach(async () => {
 });
 
 function fixture(runtime: "opencode" | "codex", mode = "complete") {
-  const directory = mkdtempSync(`/private/tmp/gattini-task14-${runtime}-`);
+  const directory = mkdtempSync(join(tmpdir(), `gattini-task14-${runtime}-`));
   directories.push(directory);
   const calls = join(directory, "calls.log");
   if (runtime === "opencode") {

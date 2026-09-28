@@ -23,16 +23,16 @@ test("verification timeout stops descendants holding output pipes", async t => {
   const f = fixture(t);
   const start = performance.now();
   const marker = join(f.root, "late-writer.txt");
-  const descendant = `console.log('descendant ready');setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'late'), 900);setTimeout(() => {}, 2200);`;
+  const descendant = `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'late'), 3500);setTimeout(() => {}, 5500);`;
   const evidence = await verifySnapshot({ worktreePath: f.root, baseSha: f.baseSha, commands: [{
-    argv: [process.execPath, "-e", `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'inherit'}); setTimeout(() => {}, 10000);`],
-    timeoutMs: 400,
+    argv: [process.execPath, "-e", `const child=require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'inherit'}); if (child.pid) console.log('descendant ready'); setTimeout(() => {}, 10000);`],
+    timeoutMs: 1600,
   }] });
   assert.match(evidence.checks[0]!.stdout, /descendant ready/);
   assert.equal(evidence.acceptance, "failed");
   assert.equal(evidence.checks[0]!.timedOut, true);
-  assert.ok(performance.now() - start < 1800, "descendant must not extend the 400 ms timeout to its 2200 ms lifetime");
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  assert.ok(performance.now() - start < 3000, "descendant must not extend the 1600 ms timeout to its 5500 ms lifetime");
+  await new Promise(resolve => setTimeout(resolve, 3800));
   assert.equal(existsSync(marker), false, "the descendant must be terminated, not merely disconnected");
 });
 

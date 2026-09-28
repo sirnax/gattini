@@ -23,10 +23,11 @@ The checksum detects accidental corruption when checked against a checksum obtai
 | Component | Local artifact | Status |
 | --- | --- | --- |
 | CLI and daemon | `gattini-0.2.0.tgz` with checksum and `release.json` | Built byte-identically under Node 24 and 26 on Apple Silicon; disposable-prefix install tests passed. Not published. |
+| Linux CLI and daemon | `gattini-0.2.0-linux-arm64.tgz` and `gattini-0.2.0-linux-x64.tgz` | Offline Node 24 suites passed in disposable Debian 12 containers on both architectures; packaged daemon/CLI restart checks passed on Ubuntu 24.04. Not published. |
 | Homebrew formula | Generated `gattini.rb` bound to the exact tarball checksum | Local draft only. A real tap URL, named-formula audit, `brew test`, and isolated Homebrew install/upgrade/uninstall remain open. |
 | VS Code client | `extension/` source and compiled development host | Local extension-host and manual checks passed. No VSIX or Marketplace release has been prepared or installed into a normal profile. |
 
-The verified package targets macOS arm64. A Debian/Ubuntu Linux build path is in preparation but has not yet run under Linux; see the [Linux guide](installation-linux.md). Intel macOS and Windows builds have not been validated. The editor client requires the matching `0.2.0` daemon and protocol v2; it does not contain or start the daemon.
+The verified package targets macOS arm64. Linux ARM64/x64 archives have passed disposable Debian 12 and Ubuntu 24.04 checks; see the [Linux guide](installation-linux.md) and the source repository’s Task 16 Linux validation record. Intel macOS and Windows builds have not been validated. The editor client requires the matching `0.2.0` daemon and protocol v2; it does not contain or start the daemon.
 
 ## Install
 

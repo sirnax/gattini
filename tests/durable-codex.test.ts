@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect, type Socket } from "node:net";
 import { DatabaseSync } from "node:sqlite";
@@ -10,7 +11,7 @@ const fixtures: string[] = [];
 const daemons: RunningDaemon[] = [];
 
 function fixture(mode: string): { directory: string; executable: string; calls: string } {
-  const directory = mkdtempSync("/private/tmp/gattini-codex-durable-");
+  const directory = mkdtempSync(join(tmpdir(), "gattini-codex-durable-"));
   fixtures.push(directory);
   const executable = join(directory, "fake-codex");
   const calls = join(directory, "calls.jsonl");

@@ -87,3 +87,47 @@ node scripts/verify-local-release-stage.mjs --old-archive /private/tmp/gattini-t
 ```
 
 The formula rendered and `ruby -c` reported `Syntax OK`. The disposable staging upgrade passed with old job `f1f6fd11-87ea-4350-a848-1043ec23b66b`, new job `9c503863-e823-49d6-9631-520a5d90a23f`, three new-job events and `statePreservedAfterUninstall:true`. This still does not count as a named Homebrew audit, `brew test`, formula installation or tap publication.
+
+## Final platform-guide archive — 28 September 2026
+
+The platform guides were updated after the Linux runs, so the Mac archive was rebuilt again. This is the final local Mac artifact for this source revision; the earlier `1c249d...` and `438769...` checksums above remain historical evidence only. Exact final build and checksum commands:
+
+```sh
+env PATH=/opt/homebrew/opt/node@24/bin:$PATH node scripts/package-local.mjs --out-dir /private/tmp/gattini-task16-final-platform-mac-node24-20260928
+node scripts/package-local.mjs --out-dir /private/tmp/gattini-task16-final-platform-mac-node26-20260928
+cmp -s /private/tmp/gattini-task16-final-platform-mac-node24-20260928/gattini-0.2.0.tgz /private/tmp/gattini-task16-final-platform-mac-node26-20260928/gattini-0.2.0.tgz
+(cd /private/tmp/gattini-task16-final-platform-mac-node24-20260928 && shasum -a 256 -c gattini-0.2.0.tgz.sha256)
+```
+
+Both builds succeeded, `cmp` exited 0, and checksum verification reported `OK`. The archive is **85,960 bytes**, SHA-256 **`97ab34442ff72130333945ff177ff82a82c78a469da050ff1f818d0cc027e06f`**. Both Node 24.21.0 and Node 26.10.0 reran `node --test dist/tests/package-lifecycle.test.js` on the updated packaged guides and passed **3/3** each. Before the guide-only changes, both full Mac offline gates passed **203/203 root tests** and **9/9 extension tests**; the focused package checks cover the subsequent guide change. Their exact final-source commands were:
+
+```sh
+env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run typecheck && env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test > /private/tmp/gattini-task16-linux-final-mac-node24.log 2>&1 && tail -n 9 /private/tmp/gattini-task16-linux-final-mac-node24.log
+npm run typecheck && npm test > /private/tmp/gattini-task16-linux-final-mac-node26.log 2>&1 && tail -n 9 /private/tmp/gattini-task16-linux-final-mac-node26.log
+env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run typecheck --prefix extension && env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build --prefix extension && env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test --prefix extension
+npm run typecheck --prefix extension && npm run build --prefix extension && npm test --prefix extension
+env PATH=/opt/homebrew/opt/node@24/bin:$PATH node --test dist/tests/package-lifecycle.test.js
+node --test dist/tests/package-lifecycle.test.js
+```
+
+The [Linux validation](TASK16_LINUX_VALIDATION.md) records the separate arm64/x64 containers and final Linux archive hashes.
+
+The renderer pinned the exact final Mac archive and `ruby -c` reported `Syntax OK`:
+
+```sh
+mkdir -p /private/tmp/gattini-task16-final-platform-formula-20260928
+node scripts/render-homebrew-formula.mjs --release-json /private/tmp/gattini-task16-final-platform-mac-node24-20260928/release.json --archive /private/tmp/gattini-task16-final-platform-mac-node24-20260928/gattini-0.2.0.tgz --url file:///private/tmp/gattini-task16-final-platform-mac-node24-20260928/gattini-0.2.0.tgz --homepage https://example.com/gattini --out /private/tmp/gattini-task16-final-platform-formula-20260928/gattini.rb
+ruby -c /private/tmp/gattini-task16-final-platform-formula-20260928/gattini.rb
+```
+
+The earlier 0.1.0 archive under `/private/tmp/gattini-task15-final-node24` had been cleared by the host before the final staging run. The first attempt against it exited 1 with `ENOENT` for `release.json`. A replacement 0.1.0 fixture was built from recorded Git commit `07e9974` without changing the working tree:
+
+```sh
+mkdir -p /private/tmp/gattini-task15-rebuilt-20260928/source
+git archive 07e9974 | tar -x -C /private/tmp/gattini-task15-rebuilt-20260928/source
+ln -s /Users/nathanlord/VS/gattini/gattini/node_modules /private/tmp/gattini-task15-rebuilt-20260928/source/node_modules
+(cd /private/tmp/gattini-task15-rebuilt-20260928/source && env PATH=/opt/homebrew/opt/node@24/bin:$PATH node scripts/package-local.mjs --out-dir /private/tmp/gattini-task15-rebuilt-20260928/release)
+node scripts/verify-local-release-stage.mjs --old-archive /private/tmp/gattini-task15-rebuilt-20260928/release/gattini-0.1.0.tgz --old-release /private/tmp/gattini-task15-rebuilt-20260928/release/release.json --new-archive /private/tmp/gattini-task16-final-platform-mac-node24-20260928/gattini-0.2.0.tgz --new-release /private/tmp/gattini-task16-final-platform-mac-node24-20260928/release.json --node /opt/homebrew/opt/node@24/bin/node --work-dir '/private/tmp/gattini-task16-final-platform-upgrade with spaces'
+```
+
+The rebuilt 0.1.0 archive had SHA-256 `9e897fef5b7f52ef60e6f48a0c4f8d6125b8428abcc553ca81fdd35347caf895`; it is **not byte-identical** to the historical 0.1.0 archive (`73e0f6...`) and is described only as a Git-snapshot fixture. The upgrade rehearsal passed: old job `565c0f87-b694-43fd-a035-38ca9d6e1bd0`, new job `d02a57be-25c2-4273-a54d-fb7cce725188`, three new events, and `statePreservedAfterUninstall:true`. The previous rehearsal above did use the historical archive before the host cleared it. Neither rehearsal is a Homebrew formula installation or `brew test`; Task 16 stays open.

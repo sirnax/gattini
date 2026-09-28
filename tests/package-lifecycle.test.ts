@@ -157,8 +157,8 @@ test("local prefix upgrade and uninstall retain isolated jobs and configuration"
   const manifest = JSON.parse(readFileSync(join(prefix, "lib", "node_modules", "gattini", "package.json"), "utf8")) as Record<string, unknown>;
   assert.equal(manifest.version, RELEASE_VERSION);
   assert.equal((manifest.engines as Record<string, string>).node, ">=24");
-  assert.deepEqual(manifest.os, ["darwin"]);
-  assert.deepEqual(manifest.cpu, ["arm64"]);
+  assert.deepEqual(manifest.os, [process.platform]);
+  assert.deepEqual(manifest.cpu, [process.arch]);
   assert.deepEqual(manifest.dependencies ?? {}, {});
   assert.deepEqual(manifest.bin, { gattini: "dist/src/cli/gattini.js", gattinid: "dist/src/daemon/gattinid.js" });
   assert.equal(readFileSync(config, "utf8"), "{\"sentinel\":\"preserve\"}\n");
