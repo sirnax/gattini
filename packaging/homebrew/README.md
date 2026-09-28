@@ -17,4 +17,6 @@ The generated formula includes a functional fake-job test using a disposable sta
 
 The [Task 16 local validation record](../../docs/roadmaps/TASK16_LOCAL_VALIDATION.md) gives the exact archive checksum and Homebrew lifecycle evidence. The earlier `scripts/verify-local-release-stage.mjs` rehearsal checks package layout independently of Homebrew.
 
+For the owner's separate Apple Silicon Mac, the [other-Mac field-test record](../../docs/roadmaps/TASK16_OTHER_MAC_HOMEBREW_TEST.md) identifies a checked ZIP and a single script that runs a real normal-prefix `brew install`, offline fake job, and `brew uninstall` using a local temporary tap. It records the result only after the owner runs it; a disposable-prefix rehearsal does not count as that result.
+
 Formula syntax and service behavior follow the official [Homebrew Formula Cookbook](https://docs.brew.sh/Formula-Cookbook) and [Node formula guidance](https://docs.brew.sh/Language-Specific-Formulae).
