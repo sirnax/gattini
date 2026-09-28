@@ -1,6 +1,6 @@
 # Task 16 other-Mac Homebrew test bundle — prepared 28 September 2026
 
-This is a portable **local** test of real `brew install`, formula `brew test`, fake-job execution, and `brew uninstall` on an Apple Silicon Mac. It is meant for the owner's iMac or other MacBook, provided that Mac reports `arm64`. The corrected script passed on the development Mac's normal Homebrew installation on 28 September 2026; **no other-Mac result has been received yet**. Task 16 and Checkpoint 7 remain open.
+This is a portable **local** test of real `brew install`, formula `brew test`, fake-job execution, and `brew uninstall` on an Apple Silicon Mac. It is meant for the owner's iMac or other MacBook, provided that Mac reports `arm64`. The corrected script passed on the development Mac's normal Homebrew installation on 28 September 2026; the owner has supplied an iMac log showing the public formula, Node 24 and OpenSSL installed, while fake-job and uninstall results from that Mac remain pending. Task 16 and Checkpoint 7 remain open.
 
 The public tap is now available. For a normal installation on the other Mac, use `brew install --formula sirnax/gattini/gattini` from the [public tap](https://github.com/sirnax/homebrew-gattini). The source archive that previously returned 404 is now a public [v0.2.0 release](https://github.com/sirnax/gattini/releases/tag/v0.2.0). The ZIP below remains an optional local-tap lifecycle test; it is not required for the direct install command.
 

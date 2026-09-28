@@ -48,4 +48,21 @@ The exact disposable public install command was:
 bash /private/tmp/gattini-public-brew-smoke-20260928.sh
 ```
 
-That script used the isolated Homebrew 7.0.6 prefix under `/private/tmp`, automatically tapped the public `sirnax/gattini` repository, ran `brew install --formula --ignore-dependencies sirnax/gattini/gattini`, confirmed the formula's source URL, passed `HOMEBREW_DEVELOPER=1 brew test sirnax/gattini/gattini`, and then ran `brew uninstall --formula --force` and `brew untap`. It exited **0** and printed `PASS`. The unsupported `--ignore-dependencies` option was confined to this nonstandard isolated prefix, which had copied Node 24; the previous normal `/opt/homebrew` install test used ordinary dependency resolution. A completed other-Mac install with a fresh Node dependency is still unconfirmed. No startup service, extension publication, or paid provider test was run; the direct-edit gate remains disabled.
+That script used the isolated Homebrew 7.0.6 prefix under `/private/tmp`, automatically tapped the public `sirnax/gattini` repository, ran `brew install --formula --ignore-dependencies sirnax/gattini/gattini`, confirmed the formula's source URL, passed `HOMEBREW_DEVELOPER=1 brew test sirnax/gattini/gattini`, and then ran `brew uninstall --formula --force` and `brew untap`. It exited **0** and printed `PASS`. The unsupported `--ignore-dependencies` option was confined to this nonstandard isolated prefix, which had copied Node 24; the previous normal `/opt/homebrew` install test used ordinary dependency resolution. No startup service, extension publication, or paid provider test was run by the agent; the direct-edit gate remains disabled.
+
+## Owner-supplied iMac result — 28 September 2026
+
+The owner pasted the output of `brew install --formula sirnax/gattini/gattini` from a second Mac. Homebrew auto-tapped `sirnax/gattini`, downloaded and verified the 86.0 KB public formula archive, installed Gattini 0.2.0 and Node 24.21.0, and upgraded OpenSSL 3.6.4_1. The formula reported 78 installed files and completed successfully. The owner then ran `brew services start sirnax/gattini/gattini`; Homebrew reported service `sh.brew.gattini` started. This service action was initiated by the owner, not by the installation or agent. `gattini --help` printed usage but exited through the unknown-command path. That CLI issue has a source fix after the immutable 0.2.0 release; the published archive still has the issue. No offline fake job, daemon restart, `brew test`, or uninstall transcript from that iMac has been supplied yet. The owner-supplied console output is useful field evidence, not independent remote attestation.
+
+The follow-up source fix recognizes `gattini --help`, `gattini -h`, and `gattini help` locally, prints usage on stdout, and exits 0 without contacting a daemon. It does not alter the published 0.2.0 archive or formula. Verification on the development Mac:
+
+```sh
+env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run typecheck
+env PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test
+npm run typecheck
+npm test
+node dist/src/cli/gattini.js --help
+git diff --check
+```
+
+Node 24.21.0 and Node 26.10.0 each passed typecheck and **204/204** offline root tests after the CLI change. The direct `--help` check exited 0 and printed 14 usage lines. The first Node 24 run inside the restricted tool sandbox failed **61** daemon socket tests with `listen EPERM`; rerunning with local socket permission passed **204/204**. Node 26 passed **204/204** with the same permission. Logs: `/private/tmp/gattini-help-node24-test.log` and `/private/tmp/gattini-help-node26-test.log`. No provider call, extension publication, formula update, or startup service action was performed in this follow-up.

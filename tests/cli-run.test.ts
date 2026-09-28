@@ -33,6 +33,17 @@ function invoke(path: string, ...args: string[]) {
   return { child, done };
 }
 
+test("help succeeds without a running daemon", async () => {
+  const path = directory();
+  for (const flag of ["--help", "-h", "help"]) {
+    const outcome = await invoke(path, flag).done;
+    assert.equal(outcome.code, 0);
+    assert.equal(outcome.stderr, "");
+    assert.match(outcome.stdout, /^Usage:\n/);
+    assert.match(outcome.stdout, /gattini run --task-file/);
+  }
+});
+
 async function mock(path: string, handler: (method: string, params: Record<string, unknown>) => unknown): Promise<void> {
   const server: Server = createServer(socket => {
     let input = "";

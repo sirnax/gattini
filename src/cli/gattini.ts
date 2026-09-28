@@ -321,6 +321,10 @@ async function runJob(path: string, startedValue: unknown, pollMs: number, cance
 }
 
 async function main(): Promise<void> {
+  if (process.argv.length === 3 && (process.argv[2] === "--help" || process.argv[2] === "-h" || process.argv[2] === "help")) {
+    process.stdout.write(`${usage()}\n`);
+    return;
+  }
   let json = process.argv.includes("--json");
   try {
     const parsed = parseArgs(process.argv.slice(2));
