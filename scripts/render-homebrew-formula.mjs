@@ -55,7 +55,7 @@ if (homepage.protocol !== "https:" || homepage.username || homepage.password || 
   fail("Homepage must be an HTTPS URL without credentials, query, fragment, or Ruby syntax");
 }
 
-const formula = `# Local preparation only. Audit, test, installation, and publication require separate validation.
+const formula = `# Local formula template. Replace the test URL and homepage before publication.
 require "json"
 require "shellwords"
 
@@ -63,18 +63,17 @@ class Gattini < Formula
   desc "Local-first durable AI coding job broker"
   homepage "${suppliedHomepage}"
   url "${suppliedUrl}"
-  version "${release.version}"
   sha256 "${release.sha256}"
   license "MIT"
 
-  depends_on :macos
   depends_on arch: :arm64
+  depends_on :macos
   depends_on "node@24"
 
   def install
     source = (buildpath/"package/package.json").exist? ? buildpath/"package" : buildpath
     libexec.install source/"package.json", source/"dist", source/"LICENSE", source/"README.md", source/"docs"
-    node = Formula["node@24"].opt_bin/"node"
+    node = formula_opt_bin("node@24")/"node"
     (bin/"gattini").write <<~SH
       #!/bin/sh
       exec "#{node}" "#{libexec}/dist/src/cli/gattini.js" "$@"
@@ -83,7 +82,7 @@ class Gattini < Formula
       #!/bin/sh
       exec "#{node}" "#{libexec}/dist/src/daemon/gattinid.js" "$@"
     SH
-    chmod 0755, bin/"gattini", bin/"gattinid"
+    chmod 0755, [bin/"gattini", bin/"gattinid"]
   end
 
   service do
@@ -96,19 +95,21 @@ class Gattini < Formula
     task = testpath/"task with spaces.txt"
     task.write("Homebrew offline fake job\\n")
     ENV["GATTINI_STATE_DIR"] = state.to_s
-    pid = spawn((bin/"gattinid").to_s, out: testpath/"daemon.log", err: testpath/"daemon.err")
+    pid = spawn((bin/"gattinid").to_s, out: (testpath/"daemon.log").to_s, err: (testpath/"daemon.err").to_s)
     begin
       socket = state/"gattinid.sock"
       100.times do
         break if socket.exist?
+
         sleep 0.1
       end
-      assert_predicate socket, :exist?
-      output = shell_output("#{bin}/gattini run --task-file #{Shellwords.escape(task.to_s)} --idempotency-key brew-smoke --role code --json")
+      assert_path_exists socket
+      command = "#{bin}/gattini run --task-file #{Shellwords.escape(task.to_s)}"
+      output = shell_output("#{command} --idempotency-key brew-smoke --role code --json")
       result = JSON.parse(output)
       assert_equal "completed", result.fetch("state")
       assert_equal "unverified", result.fetch("result").fetch("acceptance")
-      assert_predicate state/"jobs.sqlite", :exist?
+      assert_path_exists state/"jobs.sqlite"
     ensure
       Process.kill("TERM", pid)
       Process.wait(pid)

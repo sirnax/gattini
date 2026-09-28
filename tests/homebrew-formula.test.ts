@@ -32,7 +32,8 @@ test("local formula pins checked archive, version, platform and Node runtime wit
     assert.match(formula, /class Gattini < Formula/);
     assert.ok(formula.includes(`url "${sourceUrl}"`));
     assert.ok(formula.includes(`sha256 "${sha256}"`));
-    assert.match(formula, /version "0\.2\.0"/);
+    assert.match(formula, /gattini-0\.2\.0\.tgz/);
+    assert.doesNotMatch(formula, /^\s*version /m, "Homebrew infers the version from the archive URL");
     assert.match(formula, /depends_on :macos/);
     assert.match(formula, /depends_on arch: :arm64/);
     assert.match(formula, /depends_on "node@24"/);
